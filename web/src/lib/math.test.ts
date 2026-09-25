@@ -9,7 +9,11 @@ describe("Go-reference math", () => {
     expect(calculateGear(1)).toBeNull();
   });
   it("rounds like Go", () => expect(round3(-0.2928932188)).toBe(-0.293));
-  it("keeps wheel compressor behavior separate", () => expect(calculateWheel(10)).toMatchObject({ compressors: 2, centerAngle: 18 }));
+  it("keeps wheel compressor behavior separate", () => {
+    expect(calculateWheel(10)).toMatchObject({ compressors: 2, centerAngle: 18 });
+    expect(calculateWheel(1)).toBeNull();
+    expect(calculateWheel(2)).not.toBeNull();
+  });
   it("validates crank layouts and piston inputs", () => {
     expect(calculateCrank("V", 5)).toBeNull();
     expect(calculateCrank("Boxer", 6)?.phases).toEqual([0, 120, 240]);

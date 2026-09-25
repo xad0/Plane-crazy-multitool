@@ -22,7 +22,7 @@ export function calculateCrank(layout: CrankLayout, cylinders: number) {
 }
 
 export function calculateWheel(size: number) {
-  if (!Number.isInteger(size) || size < 1) return null;
+  if (!Number.isInteger(size) || size < 2) return null;
   const angleLock = 360 / size;
   const offset = 1 / Math.tan(Math.PI / size);
   const compressors = Math.max(1, Math.floor(offset) - 1);
