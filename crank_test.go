@@ -1,8 +1,6 @@
 package main
 
-import (
-	"testing"
-)
+import "testing"
 
 func TestCrankValid(t *testing.T) {
 	tests := []struct {
@@ -10,25 +8,21 @@ func TestCrankValid(t *testing.T) {
 		cylinders int
 		want      bool
 	}{
-		// Inline: any positive cylinder count is valid.
 		{crankInline, 1, true},
-		{crankInline, 3, true},
 		{crankInline, 4, true},
 		{crankInline, 6, true},
 		{crankInline, 0, false},
 		{crankInline, -1, false},
 
-		// V: requires even, positive cylinder count.
 		{crankV, 4, true},
+		{crankV, 5, true},
 		{crankV, 6, true},
-		{crankV, 3, false}, // odd
-		{crankV, 5, false}, // odd
+		{crankV, 7, true},
 		{crankV, 0, false},
 
-		// Boxer: same even requirement as V.
 		{crankBoxer, 4, true},
+		{crankBoxer, 5, true},
 		{crankBoxer, 6, true},
-		{crankBoxer, 3, false},
 		{crankBoxer, 0, false},
 	}
 
@@ -53,11 +47,15 @@ func TestCrankEffectivePositions(t *testing.T) {
 		{crankInline, 4, 4},
 		{crankInline, 6, 6},
 		{crankInline, 0, 0},
+
 		{crankV, 4, 2},
+		{crankV, 5, 3},
 		{crankV, 6, 3},
-		{crankV, 3, 0}, // odd — invalid
+		{crankV, 7, 4},
+		{crankV, 0, 0},
+
+		{crankBoxer, 5, 3},
 		{crankBoxer, 6, 3},
-		{crankBoxer, 3, 0}, // odd — invalid
 	}
 
 	for _, tt := range tests {
@@ -79,10 +77,16 @@ func TestCrankAngle(t *testing.T) {
 	}{
 		{crankInline, 4, 90.0},
 		{crankInline, 6, 60.0},
-		{crankV, 4, 180.0}, // 2 effective positions
-		{crankV, 6, 120.0}, // 3 effective positions
+
+		{crankV, 4, 180.0},
+		{crankV, 5, 120.0},
+		{crankV, 6, 120.0},
+		{crankV, 7, 90.0},
+
+		{crankBoxer, 5, 120.0},
 		{crankBoxer, 6, 120.0},
-		{crankV, 3, 0.0}, // invalid — 0 positions
+
+		{crankV, 0, 0.0},
 		{crankInline, 0, 0.0},
 	}
 

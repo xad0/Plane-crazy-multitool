@@ -15,8 +15,8 @@ export function calculateGear(teeth: number, compressors?: number): GearResult |
 
 export type CrankLayout = "Inline" | "V" | "Boxer";
 export function calculateCrank(layout: CrankLayout, cylinders: number) {
-  if (!Number.isInteger(cylinders) || cylinders < 1 || (layout !== "Inline" && cylinders % 2 !== 0)) return null;
-  const positions = layout === "Inline" ? cylinders : cylinders / 2;
+  if (!Number.isInteger(cylinders) || cylinders < 1) return null;
+  const positions = layout === "Inline" ? cylinders : Math.ceil(cylinders / 2);
   const angle = 360 / positions;
   return { positions, angle, phases: Array.from({ length: positions }, (_, i) => i * angle) };
 }

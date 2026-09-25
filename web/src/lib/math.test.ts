@@ -15,7 +15,8 @@ describe("Go-reference math", () => {
     expect(calculateWheel(2)).not.toBeNull();
   });
   it("validates crank layouts and piston inputs", () => {
-    expect(calculateCrank("V", 5)).toBeNull();
+    expect(calculateCrank("V", 5)?.phases).toEqual([0, 120, 240]);
+    expect(calculateCrank("Boxer", 5)?.phases).toEqual([0, 120, 240]);
     expect(calculateCrank("Boxer", 6)?.phases).toEqual([0, 120, 240]);
     expect(calculatePiston(2, 2, 3.106)).toBe(3.106);
   });

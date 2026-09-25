@@ -37,11 +37,11 @@ func crankEffectivePositions(layout crankLayout, cylinders int) int {
 		return cylinders
 
 	case crankV, crankBoxer:
-		if cylinders <= 0 || cylinders%2 != 0 {
+		if cylinders <= 0 {
 			return 0
 		}
 
-		return cylinders / 2
+		return (cylinders + 1) / 2
 
 	default:
 		return 0
@@ -97,7 +97,7 @@ func crankValid(layout crankLayout, cylinders int) bool {
 		return true
 
 	case crankV, crankBoxer:
-		return cylinders%2 == 0
+		return cylinders > 0
 
 	default:
 		return false
@@ -508,7 +508,7 @@ func (m model) viewCrank() tea.View {
 						lipgloss.Color("#f38ba8"),
 					).
 					Render(
-						"V and Boxer layouts require an even cylinder count.",
+						"Cylinder count must be positive.",
 					),
 			)
 

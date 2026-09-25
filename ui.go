@@ -4938,23 +4938,6 @@ func (m model) viewMain() tea.View {
 
 			switch {
 
-			case compressorValue < 0:
-
-				calculatorLines =
-					append(
-						calculatorLines,
-						lipgloss.NewStyle().
-							Foreground(
-								lipgloss.Color(
-									"#f38ba8",
-								),
-							).
-							Bold(true).
-							Render(
-								"OUT OF RANGE",
-							),
-					)
-
 			case compressorValue > 1:
 
 				calculatorLines =
@@ -5434,24 +5417,6 @@ func (m model) renderStackedCalculator(
 	if m.cfg.Calculator.Warnings {
 
 		switch {
-
-		case compressorValue < 0:
-
-			content =
-				lipgloss.JoinVertical(
-					lipgloss.Left,
-					content,
-					lipgloss.NewStyle().
-						Foreground(
-							lipgloss.Color(
-								"#f38ba8",
-							),
-						).
-						Bold(true).
-						Render(
-							"OUT OF RANGE",
-						),
-				)
 
 		case compressorValue > 1:
 
