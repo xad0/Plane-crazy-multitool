@@ -795,7 +795,7 @@ func (m *model) updateAutomaticCompressor() {
 		)
 
 	if err != nil ||
-		teeth <= 0 {
+		teeth < 3 {
 
 		return
 	}
@@ -821,7 +821,7 @@ func (m model) currentTeeth() int {
 		)
 
 	if err != nil ||
-		value <= 0 {
+		value < 3 {
 
 		return 6
 	}

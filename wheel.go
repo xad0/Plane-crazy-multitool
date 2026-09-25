@@ -49,7 +49,7 @@ func wheelCurrentTireSize(m model) int {
 }
 
 func wheelOffset(tireSize int) float64 {
-	if tireSize <= 0 {
+	if tireSize < 2 {
 		return 0
 	}
 

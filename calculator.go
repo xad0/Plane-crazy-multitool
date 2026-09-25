@@ -4,6 +4,10 @@ import "math"
 
 // Calculate returns the full angle, half angle and raw offset.
 func Calculate(teeth int) (full, half, offset float64) {
+	if teeth < 3 {
+		return 0, 0, 0
+	}
+
 	full = 360.0 / float64(teeth)
 	half = full / 2.0
 

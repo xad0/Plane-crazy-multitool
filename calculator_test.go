@@ -12,6 +12,9 @@ func TestCalculate(t *testing.T) {
 		wantHalf   float64
 		wantOffset float64
 	}{
+		// Minimum valid: 3 teeth. sin(360°/3) = sin(120°) ≠ 0, so no singularity.
+		{3, 120.0, 60.0, -0.4226497308},
+		// 4 and 5 are confirmed valid in Plane Crazy.
 		{4, 90.0, 45.0, -0.2928932188},
 		{5, 72.0, 36.0, -0.149349191648},
 		{6, 60.0, 30.0, 0.0},
@@ -50,6 +53,23 @@ func TestCalculate(t *testing.T) {
 				tt.teeth,
 				offset,
 				tt.wantOffset,
+			)
+		}
+	}
+}
+
+// TestCalculateInvalidBoundary verifies that teeth < 3 (singular values) return
+// (0, 0, 0) to prevent divide-by-zero propagation.
+func TestCalculateInvalidBoundary(t *testing.T) {
+	invalidTeeth := []int{0, 1, 2, -5}
+
+	for _, teeth := range invalidTeeth {
+		full, half, offset := Calculate(teeth)
+
+		if full != 0 || half != 0 || offset != 0 {
+			t.Errorf(
+				"Calculate(%d) = (%f, %f, %f), want (0, 0, 0)",
+				teeth, full, half, offset,
 			)
 		}
 	}

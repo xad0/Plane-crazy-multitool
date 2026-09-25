@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -18,7 +19,7 @@ func pistonDistance(m model) float64 {
 		64,
 	)
 
-	if err != nil || value < 0 {
+	if err != nil || value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 		return 0
 	}
 
@@ -47,7 +48,7 @@ func pistonValue(m model) float64 {
 		64,
 	)
 
-	if err != nil || value < 0 {
+	if err != nil || value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 		return 0
 	}
 
@@ -61,7 +62,11 @@ func calculatePistonLength(
 ) float64 {
 	if distance < 0 ||
 		pistons < 1 ||
-		value < 0 {
+		value < 0 ||
+		math.IsNaN(distance) ||
+		math.IsInf(distance, 0) ||
+		math.IsNaN(value) ||
+		math.IsInf(value, 0) {
 		return 0
 	}
 
@@ -75,7 +80,11 @@ func pistonLengthValid(
 ) bool {
 	return distance >= 0 &&
 		pistons >= 1 &&
-		value >= 0
+		value >= 0 &&
+		!math.IsNaN(distance) &&
+		!math.IsInf(distance, 0) &&
+		!math.IsNaN(value) &&
+		!math.IsInf(value, 0)
 }
 
 func (m model) updatePiston(
@@ -90,12 +99,14 @@ func (m model) updatePiston(
 	case "esc":
 		m.pistonDistanceInput.Blur()
 		m.pistonAmountInput.Blur()
+		m.pistonValueInput.Blur()
 		m.page = pageHome
 		return m, nil
 
 	case "c":
 		m.pistonDistanceInput.Blur()
 		m.pistonAmountInput.Blur()
+		m.pistonValueInput.Blur()
 		m.customizeTool = customizePiston
 		m.customIndex = 0
 		m.page = pageCustomize
@@ -155,6 +166,11 @@ func (m model) updatePiston(
 
 		if m.pistonAmountInput.Focused() {
 			m.pistonAmountInput.Blur()
+			return m, nil
+		}
+
+		if m.pistonValueInput.Focused() {
+			m.pistonValueInput.Blur()
 			return m, nil
 		}
 
@@ -457,10 +473,12 @@ func (m model) viewPiston() tea.View {
 		)
 
 	if distanceErr != nil ||
+		math.IsNaN(distanceValue) || math.IsInf(distanceValue, 0) ||
 		distanceValue < 0 ||
 		pistonsErr != nil ||
 		pistonsValue < 1 ||
 		valueErr != nil ||
+		math.IsNaN(valueValue) || math.IsInf(valueValue, 0) ||
 		valueValue < 0 {
 
 		resultLines =

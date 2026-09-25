@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"math"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,12 +94,13 @@ func (m model) dynoVisibleCount() int {
 // ─────────────────────────────────────────────────────────────
 
 func dynoParseFloat(value string) (float64, bool) {
+	value = strings.TrimSpace(value)
 	if value == "" {
 		return 0, false
 	}
 
 	number, err := strconv.ParseFloat(value, 64)
-	if err != nil {
+	if err != nil || math.IsNaN(number) || math.IsInf(number, 0) {
 		return 0, false
 	}
 
@@ -2151,9 +2153,15 @@ func dynoExportPNG(
 		)
 	}
 
+	exportPath := "dyno.png"
+	if m.cfg.ExportDirectory != "" {
+		_ = os.MkdirAll(m.cfg.ExportDirectory, 0755)
+		exportPath = filepath.Join(m.cfg.ExportDirectory, "dyno.png")
+	}
+
 	file, err :=
 		os.Create(
-			"dyno.png",
+			exportPath,
 		)
 
 	if err != nil {

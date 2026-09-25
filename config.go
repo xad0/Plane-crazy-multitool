@@ -281,7 +281,7 @@ func normalizeConfig(
 			defaults.ExportDirectory
 	}
 
-	if cfg.Reference.SmallestGear < 1 {
+	if cfg.Reference.SmallestGear < 3 {
 		cfg.Reference.SmallestGear =
 			defaults.Reference.SmallestGear
 	}

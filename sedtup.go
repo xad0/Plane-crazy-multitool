@@ -18,7 +18,7 @@ const (
 	setupSkip
 )
 
-const setupFieldCount = 6
+const setupFieldCount = 5
 
 func (m model) setupItems() []string {
 	return []string{
