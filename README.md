@@ -10,7 +10,7 @@ A modern web app and terminal engineering calculator/multitool for **Plane Crazy
 
 **Use the web app instantly — no installation required.**
 
-🌐 **[Open PC Multitool](https://xadomas2012.github.io/Plane-crazy-multitool/)**
+🌐 **[Open PC Multitool](https://xad0.github.io/Plane-crazy-multitool/)**
 
 The web app is responsive and works on desktop, tablet, and mobile browsers.
 
