@@ -18,8 +18,8 @@ const (
 )
 
 func main() {
-	if len(os.Args) != 4 {
-		fail("usage: updater <new-file> <target> <parent-pid>")
+	if len(os.Args) != 5 {
+		fail("usage: updater <new-file> <target> <parent-pid> <version>")
 	}
 
 	newPath := os.Args[1]
@@ -47,7 +47,13 @@ func main() {
 		time.Sleep(retryDelay)
 	}
 
-	if err := installUpdate(newPath, targetPath); err != nil {
+	version := os.Args[4]
+
+	if err := installUpdate(
+		newPath,
+		targetPath,
+		version,
+	); err != nil {
 		fail(err.Error())
 	}
 
@@ -141,7 +147,11 @@ func splitFields(s string) []string {
 	return fields
 }
 
-func installUpdate(zipPath, targetPath string) error {
+func installUpdate(
+	zipPath string,
+	targetPath string,
+	version string,
+) error {
 	targetDir := filepath.Dir(targetPath)
 
 	info, err := os.Stat(targetPath)
@@ -218,7 +228,15 @@ func installUpdate(zipPath, targetPath string) error {
 		}
 	}
 
+	if err := writeUpdateCompletion(version); err != nil {
+		// The update itself is valid even if the informational marker
+		// cannot be written.
+		_ = err
+	}
+
 	if err := startUpdatedApp(targetPath); err != nil {
+		removeUpdateCompletion()
+
 		_ = os.Remove(targetPath)
 		_ = os.Rename(backupPath, targetPath)
 
@@ -296,6 +314,71 @@ func extractApplication(
 		"ZIP does not contain %s",
 		expected,
 	)
+}
+
+func updateCompletionPath() string {
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+
+	dir :=
+		filepath.Join(
+			cacheDir,
+			"pc-multitool",
+		)
+
+	if err := os.MkdirAll(
+		dir,
+		0755,
+	); err != nil {
+		return ""
+	}
+
+	return filepath.Join(
+		dir,
+		"update-complete",
+	)
+}
+
+func writeUpdateCompletion(version string) error {
+	version = string([]byte(version))
+	if version == "" {
+		return nil
+	}
+
+	path := updateCompletionPath()
+	if path == "" {
+		return nil
+	}
+
+	tempPath := path + ".tmp"
+
+	if err :=
+		os.WriteFile(
+			tempPath,
+			[]byte(version),
+			0600,
+		); err != nil {
+		return err
+	}
+
+	if err := os.Rename(
+		tempPath,
+		path,
+	); err != nil {
+		_ = os.Remove(tempPath)
+		return err
+	}
+
+	return nil
+}
+
+func removeUpdateCompletion() {
+	path := updateCompletionPath()
+	if path != "" {
+		_ = os.Remove(path)
+	}
 }
 
 func startUpdatedApp(targetPath string) error {

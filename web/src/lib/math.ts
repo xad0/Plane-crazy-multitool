@@ -31,12 +31,13 @@ export function calculateWheel(size: number) {
 
 export type DynoPoint = { sps: number; torque: number; rpm: number; bhp: number };
 export function calculateDyno(rows: Array<{ sps: string; torque: string }>): DynoPoint[] {
-  return rows.flatMap((row) => {
+  const points = rows.flatMap((row) => {
     const sps = Number(row.sps), torque = Number(row.torque);
     if (row.sps.trim() === "" || row.torque.trim() === "" || !Number.isFinite(sps) || !Number.isFinite(torque) || sps < 0) return [];
     const rpm = sps * 3.84;
     return [{ sps, torque, rpm, bhp: torque * rpm / 52.52 }];
   }).sort((a, b) => a.rpm - b.rpm);
+  return [{ sps: 0, torque: 0, rpm: 0, bhp: 0 }, ...points];
 }
 
 export function calculatePiston(distance: number, pistons: number, value: number) {

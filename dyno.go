@@ -116,7 +116,12 @@ func dynoBHP(torque, rpm float64) float64 {
 }
 
 func (m model) dynoGraphPoints() []dynoGraphPoint {
-	points := make([]dynoGraphPoint, 0)
+	points := []dynoGraphPoint{{
+		SPS:    0,
+		RPM:    0,
+		Torque: 0,
+		BHP:    0,
+	}}
 
 	for i := range m.dynoPoints {
 		sps, spsOK :=
@@ -168,13 +173,13 @@ func (m model) dynoGraphPoints() []dynoGraphPoint {
 func dynoPeakTorque(
 	points []dynoGraphPoint,
 ) (float64, float64, bool) {
-	if len(points) == 0 {
+	if len(points) < 2 {
 		return 0, 0, false
 	}
 
-	peak := points[0]
+	peak := points[1]
 
-	for _, point := range points[1:] {
+	for _, point := range points[2:] {
 		if point.Torque > peak.Torque {
 			peak = point
 		}
@@ -186,13 +191,13 @@ func dynoPeakTorque(
 func dynoPeakSPS(
 	points []dynoGraphPoint,
 ) (float64, float64, bool) {
-	if len(points) == 0 {
+	if len(points) < 2 {
 		return 0, 0, false
 	}
 
-	peak := points[0]
+	peak := points[1]
 
-	for _, point := range points[1:] {
+	for _, point := range points[2:] {
 		if point.SPS > peak.SPS {
 			peak = point
 		}
@@ -204,13 +209,13 @@ func dynoPeakSPS(
 func dynoPeakBHP(
 	points []dynoGraphPoint,
 ) (float64, float64, bool) {
-	if len(points) == 0 {
+	if len(points) < 2 {
 		return 0, 0, false
 	}
 
-	peak := points[0]
+	peak := points[1]
 
-	for _, point := range points[1:] {
+	for _, point := range points[2:] {
 		if point.BHP > peak.BHP {
 			peak = point
 		}
@@ -1114,7 +1119,7 @@ func dynoGraphText(
 		lipgloss.NewStyle().
 			Foreground(p.accent)
 
-	if len(points) == 0 {
+	if len(points) == 0 || (len(points) == 1 && points[0].RPM == 0 && points[0].BHP == 0) {
 
 		return strings.Join(
 			[]string{
@@ -1260,80 +1265,10 @@ func dynoGraphText(
 			return y
 		}
 
-	// Draw a smooth connected curve through the measured points.
-	//
-	// Catmull-Rom interpolation keeps the curve passing through
-	// every measured point while adding intermediate samples for
-	// a smoother Braille rendering.
-	if len(points) == 2 {
+	// Shape-preserving interpolation prevents the overshoot and
+	// loops that Catmull-Rom can introduce.
 
-		x0 := scaleX(points[0].RPM)
-		y0 := scaleY(points[0].BHP)
-		x1 := scaleX(points[1].RPM)
-		y1 := scaleY(points[1].BHP)
-
-		dynoDrawPixelLine(
-			pixels,
-			x0,
-			y0,
-			x1,
-			y1,
-		)
-
-	} else if len(points) > 2 {
-
-		const samplesPerSegment = 24
-
-		for i := 0; i < len(points)-1; i++ {
-
-			p0 := points[max(0, i-1)]
-			p1 := points[i]
-			p2 := points[i+1]
-			p3 := points[min(len(points)-1, i+2)]
-
-			xPrev := scaleX(p1.RPM)
-			yPrev := scaleY(p1.BHP)
-
-			for sample := 1; sample <= samplesPerSegment; sample++ {
-
-				t := float64(sample) / float64(samplesPerSegment)
-				t2 := t * t
-				t3 := t2 * t
-
-				h0 := -0.5*t3 + t2 - 0.5*t
-				h1 := 1.5*t3 - 2.5*t2 + 1
-				h2 := -1.5*t3 + 2*t2 + 0.5*t
-				h3 := 0.5*t3 - 0.5*t2
-
-				rpm :=
-					h0*p0.RPM +
-						h1*p1.RPM +
-						h2*p2.RPM +
-						h3*p3.RPM
-
-				bhp :=
-					h0*p0.BHP +
-						h1*p1.BHP +
-						h2*p2.BHP +
-						h3*p3.BHP
-
-				x := scaleX(rpm)
-				y := scaleY(bhp)
-
-				dynoDrawPixelLine(
-					pixels,
-					xPrev,
-					yPrev,
-					x,
-					y,
-				)
-
-				xPrev = x
-				yPrev = y
-			}
-		}
-
-	} else if len(points) == 1 {
+	if len(points) == 1 {
 
 		x := scaleX(points[0].RPM)
 		y := scaleY(points[0].BHP)
@@ -1345,6 +1280,84 @@ func dynoGraphText(
 			x,
 			y,
 		)
+
+	} else if len(points) == 2 {
+
+		dynoDrawPixelLine(
+			pixels,
+			scaleX(points[0].RPM),
+			scaleY(points[0].BHP),
+			scaleX(points[1].RPM),
+			scaleY(points[1].BHP),
+		)
+
+	} else {
+
+		slopes :=
+			dynoPCHIPSlopes(
+				points,
+			)
+
+		if slopes == nil {
+
+			for i := 0; i < len(points)-1; i++ {
+
+				dynoDrawPixelLine(
+					pixels,
+					scaleX(points[i].RPM),
+					scaleY(points[i].BHP),
+					scaleX(points[i+1].RPM),
+					scaleY(points[i+1].BHP),
+				)
+			}
+
+		} else {
+
+			const samplesPerSegment = 24
+
+			for i := 0; i < len(points)-1; i++ {
+
+				p1 := points[i]
+				p2 := points[i+1]
+
+				xPrevious := scaleX(p1.RPM)
+				yPrevious := scaleY(p1.BHP)
+
+				for sample := 1; sample <= samplesPerSegment; sample++ {
+
+					t :=
+						float64(sample) /
+							float64(samplesPerSegment)
+
+					rpm :=
+						p1.RPM +
+							(p2.RPM-p1.RPM)*t
+
+					bhp :=
+						dynoPCHIPValue(
+							p1,
+							p2,
+							slopes[i],
+							slopes[i+1],
+							t,
+						)
+
+					x := scaleX(rpm)
+					y := scaleY(bhp)
+
+					dynoDrawPixelLine(
+						pixels,
+						xPrevious,
+						yPrevious,
+						x,
+						y,
+					)
+
+					xPrevious = x
+					yPrevious = y
+				}
+			}
+		}
 	}
 
 	var lines []string

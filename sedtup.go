@@ -14,17 +14,19 @@ const (
 	setupExport setupField = iota
 	setupTheme
 	setupAccent
+	setupUpdateChannel
 	setupFinish
 	setupSkip
 )
 
-const setupFieldCount = 5
+const setupFieldCount = 6
 
 func (m model) setupItems() []string {
 	return []string{
 		"Export folder",
 		"Theme",
 		"Accent",
+		"Update channel",
 		"Finish setup",
 		"Skip setup",
 	}
@@ -115,6 +117,9 @@ func (m model) updateSetup(
 		case setupAccent:
 			m.cycleSetupAccent(-1)
 
+		case setupUpdateChannel:
+			m.cycleUpdateChannel(-1)
+
 		}
 
 	case "right":
@@ -126,6 +131,9 @@ func (m model) updateSetup(
 
 		case setupAccent:
 			m.cycleSetupAccent(1)
+
+		case setupUpdateChannel:
+			m.cycleUpdateChannel(1)
 
 		}
 
@@ -151,6 +159,10 @@ func (m model) updateSetup(
 		case setupAccent:
 
 			m.cycleSetupAccent(1)
+
+		case setupUpdateChannel:
+
+			m.cycleUpdateChannel(1)
 
 		case setupFinish:
 
@@ -433,6 +445,25 @@ func (m model) viewSetup() tea.View {
 					),
 				)
 
+		case setupUpdateChannel:
+
+			lines =
+				append(
+					lines,
+					valueStyle.Render(
+						"    "+
+							updateChannelName(
+								m.cfg.UpdateChannel,
+							),
+					),
+					subtitleStyle.Render(
+						"    "+
+							updateChannelDescription(
+								m.cfg.UpdateChannel,
+							),
+					),
+				)
+
 		case setupFinish:
 
 			lines =
@@ -546,11 +577,15 @@ func (m model) handleSetupMouse(
 		10 Accent
 		11 Accent value
 
-		12 Finish setup
-		13 Description
+		12 Update channel
+		13 Channel value
+		14 Channel description
 
-		14 Skip setup
-		15 Description
+		15 Finish setup
+		16 Description
+
+		17 Skip setup
+		18 Description
 	*/
 
 	switch msg.Y {
@@ -576,7 +611,14 @@ func (m model) handleSetupMouse(
 
 		return m, nil
 
-	case 12, 13:
+	case 12, 13, 14:
+
+		m.setupIndex =
+			int(setupUpdateChannel)
+
+		return m, nil
+
+	case 15, 16:
 
 		m.setupIndex =
 			int(setupFinish)
@@ -587,7 +629,7 @@ func (m model) handleSetupMouse(
 
 		return m, nil
 
-	case 14, 15:
+	case 17, 18:
 
 		m.setupIndex =
 			int(setupSkip)

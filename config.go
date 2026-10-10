@@ -6,6 +6,12 @@ import (
 	"path/filepath"
 )
 
+const (
+	updateChannelWorkshop = "workshop"
+	updateChannelEdge     = "edge"
+	updateChannelIronclad = "ironclad"
+)
+
 type config struct {
 	Appearance appearanceConfig `json:"appearance"`
 	Layout     layoutConfig     `json:"layout"`
@@ -18,6 +24,7 @@ type config struct {
 
 	SetupCompleted  bool   `json:"setup_completed"`
 	ExportDirectory string `json:"export_directory"`
+	UpdateChannel   string `json:"update_channel"`
 }
 
 type appearanceConfig struct {
@@ -147,6 +154,7 @@ func defaultConfig() config {
 
 		SetupCompleted:  false,
 		ExportDirectory: defaultExportDirectory(),
+		UpdateChannel:   defaultUpdateChannel(),
 	}
 }
 
@@ -236,6 +244,13 @@ func loadConfig() config {
 		)
 	}
 
+	if value, ok := raw["update_channel"]; ok {
+		_ = json.Unmarshal(
+			value,
+			&cfg.UpdateChannel,
+		)
+	}
+
 	return normalizeConfig(cfg)
 }
 
@@ -279,6 +294,13 @@ func normalizeConfig(
 	if cfg.ExportDirectory == "" {
 		cfg.ExportDirectory =
 			defaults.ExportDirectory
+	}
+
+	if cfg.UpdateChannel != updateChannelWorkshop &&
+		cfg.UpdateChannel != updateChannelEdge &&
+		cfg.UpdateChannel != updateChannelIronclad {
+		cfg.UpdateChannel =
+			defaults.UpdateChannel
 	}
 
 	if cfg.Reference.SmallestGear < 3 {

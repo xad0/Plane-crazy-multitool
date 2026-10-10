@@ -21,6 +21,8 @@ describe("Go-reference math", () => {
     expect(calculatePiston(2, 2, 3.106)).toBe(3.106);
   });
   it("skips incomplete and negative-SPS dyno rows", () => {
-    expect(calculateDyno([{ sps: "10", torque: "20" }, { sps: "-1", torque: "4" }, { sps: "", torque: "2" }])).toHaveLength(1);
+    const points = calculateDyno([{ sps: "10", torque: "20" }, { sps: "-1", torque: "4" }, { sps: "", torque: "2" }]);
+    expect(points).toHaveLength(2);
+    expect(points[0]).toEqual({ sps: 0, torque: 0, rpm: 0, bhp: 0 });
   });
 });

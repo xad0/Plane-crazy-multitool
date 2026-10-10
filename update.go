@@ -20,10 +20,7 @@ import (
 var Version = "dev"
 
 const (
-	githubRepo       = "xadomas2012/Plane-crazy-multitool"
-	latestReleaseAPI = "https://api.github.com/repos/" +
-		githubRepo +
-		"/releases/latest"
+	githubRepo  = "xadomas2012/Plane-crazy-multitool"
 	releasesAPI = "https://api.github.com/repos/" +
 		githubRepo +
 		"/releases?per_page=30"
@@ -52,6 +49,198 @@ type updateInfo struct {
 	Asset          githubAsset
 }
 
+const (
+	releaseImportanceNormal    = "normal"
+	releaseImportanceImportant = "important"
+	releaseImportanceCritical  = "critical"
+	releaseImportanceMarker    = "<!-- pc-multitool-importance:"
+)
+
+func releaseImportance(release githubRelease) string {
+	for _, rawLine := range strings.Split(release.Body, "\n") {
+		line := strings.TrimSpace(rawLine)
+
+		if !strings.HasPrefix(line, releaseImportanceMarker) ||
+			!strings.HasSuffix(line, "-->") {
+			continue
+		}
+
+		value :=
+			strings.TrimSpace(
+				strings.TrimSuffix(
+					strings.TrimPrefix(
+						line,
+						releaseImportanceMarker,
+					),
+					"-->",
+				),
+			)
+
+		switch strings.ToLower(value) {
+		case releaseImportanceNormal:
+			return releaseImportanceNormal
+		case releaseImportanceImportant:
+			return releaseImportanceImportant
+		case releaseImportanceCritical:
+			return releaseImportanceCritical
+		}
+	}
+
+	return releaseImportanceNormal
+}
+
+func releaseAllowedForChannel(
+	release githubRelease,
+	channel string,
+) bool {
+
+	switch channel {
+
+	case updateChannelIronclad:
+
+		importance := releaseImportance(release)
+
+		return importance == releaseImportanceImportant ||
+			importance == releaseImportanceCritical
+
+	case updateChannelEdge,
+		updateChannelWorkshop:
+
+		return true
+
+	default:
+
+		return false
+	}
+}
+
+func selectLatestEligibleRelease(
+	releases []githubRelease,
+	channel string,
+	currentVersion string,
+) (githubRelease, bool) {
+
+	currentVersion =
+		strings.TrimSpace(currentVersion)
+
+	allowPrerelease :=
+		currentVersion != "dev" &&
+			isPrereleaseVersion(currentVersion)
+
+	var selected githubRelease
+	found := false
+
+	for _, candidate := range releases {
+
+		if strings.TrimSpace(candidate.TagName) == "" {
+			continue
+		}
+
+		if !releaseAllowedForChannel(
+			candidate,
+			channel,
+		) {
+			continue
+		}
+
+		// Stable builds never jump to a prerelease.
+		// Prerelease builds may continue following prereleases.
+		if candidate.Prerelease &&
+			!allowPrerelease {
+
+			continue
+		}
+
+		if !found ||
+			isNewerVersion(
+				candidate.TagName,
+				selected.TagName,
+			) {
+
+			selected = candidate
+			found = true
+		}
+	}
+
+	return selected, found
+}
+
+func selectUpdateRelease(
+	releases []githubRelease,
+	channel string,
+	currentVersion string,
+) (githubRelease, bool) {
+
+	selected, found :=
+		selectLatestEligibleRelease(
+			releases,
+			channel,
+			currentVersion,
+		)
+
+	if !found {
+		return githubRelease{}, false
+	}
+
+	if currentVersion != "dev" &&
+		!isNewerVersion(
+			selected.TagName,
+			currentVersion,
+		) {
+
+		return githubRelease{}, false
+	}
+
+	return selected, true
+}
+
+func getChannelTargetUpdate(
+	channel string,
+	currentVersion string,
+) (updateInfo, error) {
+
+	releases, err := fetchReleaseList()
+	if err != nil {
+		return updateInfo{}, err
+	}
+
+	release, found :=
+		selectLatestEligibleRelease(
+			releases,
+			channel,
+			currentVersion,
+		)
+
+	if !found {
+		return updateInfo{
+			CurrentVersion: currentVersion,
+			LatestVersion:  currentVersion,
+		}, nil
+	}
+
+	info := updateInfo{
+		CurrentVersion: currentVersion,
+		LatestVersion:  release.TagName,
+		ReleaseName:    release.Name,
+		ReleaseNotes:   release.Body,
+	}
+
+	if currentVersion == "dev" &&
+		channel == updateChannelWorkshop {
+		return info, nil
+	}
+
+	asset, err :=
+		findPlatformAsset(release.Assets)
+	if err != nil {
+		return updateInfo{}, err
+	}
+
+	info.Asset = asset
+
+	return info, nil
+}
+
 const updateCacheTTL = 6 * time.Hour
 
 type releaseCache struct {
@@ -72,6 +261,44 @@ func releaseCachePath(name string) string {
 	}
 
 	return filepath.Join(dir, name)
+}
+
+func updateCompletionPath() string {
+	path := releaseCachePath("update-complete")
+	if path == "" {
+		return ""
+	}
+
+	return path
+}
+
+func consumeUpdateCompletion() string {
+	if Version == "dev" {
+		path := updateCompletionPath()
+		if path != "" {
+			_ = os.Remove(path)
+		}
+		return ""
+	}
+
+	path := updateCompletionPath()
+	if path == "" {
+		return ""
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+
+	_ = os.Remove(path)
+
+	version := strings.TrimSpace(string(data))
+	if version == "" {
+		return ""
+	}
+
+	return version
 }
 
 func loadReleaseCache(name string) ([]githubRelease, bool, []githubRelease) {
@@ -200,146 +427,51 @@ func isPrereleaseVersion(version string) bool {
 	return strings.Contains(version, "-")
 }
 
-func fetchLatestRelease() (githubRelease, error) {
-	cached, fresh, stale := loadReleaseCache("latest.json")
-	if fresh && len(cached) > 0 {
-		return cached[0], nil
-	}
-
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
-
-	req, err := http.NewRequest(
-		http.MethodGet,
-		latestReleaseAPI,
-		nil,
-	)
-	if err != nil {
-		if len(stale) > 0 {
-			return stale[0], nil
-		}
-		return githubRelease{}, err
-	}
-
-	req.Header.Set(
-		"Accept",
-		"application/vnd.github+json",
-	)
-	req.Header.Set(
-		"X-GitHub-Api-Version",
-		"2022-11-28",
-	)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		if len(stale) > 0 {
-			return stale[0], nil
-		}
-		return githubRelease{}, err
-	}
-
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if len(stale) > 0 {
-			return stale[0], nil
-		}
-		return githubRelease{}, fmt.Errorf(
-			"github API returned HTTP %d",
-			resp.StatusCode,
-		)
-	}
-
-	var release githubRelease
-
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		if len(stale) > 0 {
-			return stale[0], nil
-		}
-		return githubRelease{}, err
-	}
-
-	if strings.TrimSpace(release.TagName) == "" {
-		if len(stale) > 0 {
-			return stale[0], nil
-		}
-		return githubRelease{}, errors.New(
-			"GitHub release has no tag",
-		)
-	}
-
-	saveReleaseCache("latest.json", []githubRelease{release})
-
-	return release, nil
-}
-
 func getLatestUpdate() (updateInfo, error) {
-	if Version == "dev" {
-		return updateInfo{},
-			errors.New(
-				"running development build",
-			)
+	cfg := loadConfig()
+
+	channel := cfg.UpdateChannel
+
+	if channel != updateChannelWorkshop &&
+		channel != updateChannelEdge &&
+		channel != updateChannelIronclad {
+
+		channel =
+			defaultUpdateChannel()
 	}
 
-	var release githubRelease
+	releases, err := fetchReleaseList()
 
-	if isPrereleaseVersion(Version) {
-		releases, err :=
-			fetchReleaseList()
+	if err != nil {
+		return updateInfo{}, err
+	}
 
-		if err != nil {
-			return updateInfo{}, err
-		}
-
-		found := false
-
-		for _, candidate := range releases {
-			if !isNewerVersion(
-				candidate.TagName,
-				Version,
-			) {
-				continue
-			}
-
-			if !found ||
-				isNewerVersion(
-					candidate.TagName,
-					release.TagName,
-				) {
-
-				release = candidate
-				found = true
-			}
-		}
-
-		if !found {
-			return updateInfo{
-				CurrentVersion: Version,
-				LatestVersion:  Version,
-			}, nil
-		}
-	} else {
-		var err error
-
-		release, err =
-			fetchLatestRelease()
-
-		if err != nil {
-			return updateInfo{}, err
-		}
-
-		if !isNewerVersion(
-			release.TagName,
+	release, found :=
+		selectUpdateRelease(
+			releases,
+			channel,
 			Version,
-		) {
-			return updateInfo{
-				CurrentVersion: Version,
-				LatestVersion:  release.TagName,
-				ReleaseName:    release.Name,
-				ReleaseNotes:   release.Body,
-			}, nil
-		}
+		)
+
+	if !found {
+
+		return updateInfo{
+			CurrentVersion: Version,
+			LatestVersion:  Version,
+		}, nil
+	}
+
+	info := updateInfo{
+		CurrentVersion: Version,
+		LatestVersion:  release.TagName,
+		ReleaseName:    release.Name,
+		ReleaseNotes:   release.Body,
+	}
+
+	// Workshop builds can manually inspect the latest release,
+	// but they do not participate in automatic update installation.
+	if Version == "dev" {
+		return info, nil
 	}
 
 	asset, err :=
@@ -351,13 +483,9 @@ func getLatestUpdate() (updateInfo, error) {
 		return updateInfo{}, err
 	}
 
-	return updateInfo{
-		CurrentVersion: Version,
-		LatestVersion:  release.TagName,
-		ReleaseName:    release.Name,
-		ReleaseNotes:   release.Body,
-		Asset:          asset,
-	}, nil
+	info.Asset = asset
+
+	return info, nil
 }
 
 func findPlatformAsset(
@@ -624,8 +752,8 @@ func verifyDownloadedFile(
 
 func startUpdateHelper(
 	downloadedPath string,
+	version string,
 ) error {
-
 	targetPath, err := os.Executable()
 	if err != nil {
 		return err
@@ -674,6 +802,7 @@ func startUpdateHelper(
 			downloadedPath,
 			targetPath,
 			pid,
+			version,
 		)
 
 	cmd.Dir =
@@ -689,40 +818,6 @@ func startUpdateHelper(
 	}
 
 	return nil
-}
-
-func checkForUpdate() {
-	if Version == "dev" {
-		return
-	}
-
-	info, err :=
-		getLatestUpdate()
-
-	if err != nil {
-		return
-	}
-
-	if !isNewerVersion(
-		info.LatestVersion,
-		Version,
-	) {
-		return
-	}
-
-	// Keep the existing startup notification behavior
-	// for now. The TUI will use getLatestUpdate()
-	// directly for the actual updater flow.
-	_ = os.WriteFile(
-		filepath.Join(
-			os.TempDir(),
-			"pc-multitool-update-available",
-		),
-		[]byte(
-			info.LatestVersion,
-		),
-		0600,
-	)
 }
 
 type parsedVersion struct {

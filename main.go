@@ -8,10 +8,10 @@ import (
 )
 
 func main() {
-	checkForUpdate()
+	model := initialModel()
 
 	if _, err := tea.NewProgram(
-		initialModel(),
+		model,
 	).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
