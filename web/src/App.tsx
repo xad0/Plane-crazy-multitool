@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { calculateCrank, calculateDyno, calculateDynoCurve, dynoPlotCoordinates, calculateGear, calculatePiston, calculateWheel, DynoPoint, DynoGraphMode, round3, CrankLayout } from "./lib/math";
+import { calculateCrank, calculateDyno, calculateDynoCurve, dynoPlotCoordinates, formatDynoExportFilename, calculateGear, calculatePiston, calculateWheel, DynoPoint, DynoGraphMode, round3, CrankLayout } from "./lib/math";
 
 type Tool = "gear" | "crank" | "wheel" | "dyno" | "piston" | "settings";
 type Theme = "catppuccin-mocha" | "catppuccin-latte" | "catppuccin-frappe" | "catppuccin-macchiato" | "nord" | "gruvbox" | "solid";
@@ -346,6 +346,18 @@ function DynoTool({ settings }: { settings: Settings }) {
   );
 }
 
+// Keep same-second exports unique within this page session. If the browser finds
+// a prior file with the same name in Downloads, it can still apply its own suffix.
+const dynoExportCounts = new Map<string, number>();
+function nextDynoExportFilename(date: Date) {
+  const base = formatDynoExportFilename(date);
+  const sequence = dynoExportCounts.get(base) ?? 0;
+  dynoExportCounts.set(base, sequence + 1);
+  return formatDynoExportFilename(date, sequence);
+}
+
+type DynoDrawOptions = { width?: number; height?: number; pixelRatio?: number; standalone?: boolean };
+
 function DynoChart({ points, mode }: { points: DynoPoint[]; mode: DynoGraphMode }) {
   const canvas = useRef<HTMLCanvasElement>(null), chartWrap = useRef<HTMLDivElement>(null), [hover, setHover] = useState<DynoPoint | null>(null), [fullscreen, setFullscreen] = useState(false);
   useEffect(() => {
@@ -360,14 +372,24 @@ function DynoChart({ points, mode }: { points: DynoPoint[]; mode: DynoGraphMode 
     return () => document.removeEventListener("fullscreenchange", sync);
   }, []);
   const pointer = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect(); if (points.length <= 1) return;
-    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left - 48) / Math.max(1, rect.width - 72)));
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (points.length <= 1) return;
+    const left = 58, right = 18;
+    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left - left) / Math.max(1, rect.width - left - right)));
     const value = (point: DynoPoint) => mode === "torque-sps" ? point.sps : point.rpm;
-    const min = value(points[0]), max = value(points.at(-1)!);
+    const min = value(points[0]), max = value(points[points.length - 1]);
     const target = min + ratio * (max - min);
     setHover(points.reduce((nearest, point) => Math.abs(value(point) - target) < Math.abs(value(nearest) - target) ? point : nearest));
   };
-  const download = () => { const el = canvas.current; if (!el || points.length <= 1) return; const a = document.createElement("a"); a.download = `pc-multitool-dyno-${mode}.png`; a.href = el.toDataURL("image/png"); a.click(); };
+  const download = () => {
+    if (points.length <= 1) return;
+    const image = document.createElement("canvas");
+    drawDyno(image, points, mode, { width: 1600, height: 900, pixelRatio: 1, standalone: true });
+    const link = document.createElement("a");
+    link.download = nextDynoExportFilename(new Date());
+    link.href = image.toDataURL("image/png");
+    link.click();
+  };
   const toggleFullscreen = async () => { const wrap = chartWrap.current; if (!wrap) return; try { if (document.fullscreenElement === wrap) await document.exitFullscreen(); else await wrap.requestFullscreen(); } catch { setFullscreen(false); } };
   return (
     <div ref={chartWrap} className="chart-wrap">
@@ -381,27 +403,92 @@ function DynoChart({ points, mode }: { points: DynoPoint[]; mode: DynoGraphMode 
   );
 }
 
-function drawDyno(canvas: HTMLCanvasElement, points: DynoPoint[], mode: DynoGraphMode) {
-  const rect = canvas.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2), w = Math.max(280, rect.width), h = Math.max(260, rect.height);
-  canvas.width = w * dpr; canvas.height = h * dpr; const ctx = canvas.getContext("2d")!; ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
-  const css = getComputedStyle(document.documentElement), muted = css.getPropertyValue("--muted"), border = css.getPropertyValue("--border"), accent = css.getPropertyValue("--accent"), text = css.getPropertyValue("--text");
-  const left = 52, right = 18, top = 16, bottom = 36, pw = w - left - right, ph = h - top - bottom;
-  ctx.font = "12px system-ui"; ctx.strokeStyle = border; ctx.fillStyle = muted; ctx.lineWidth = 1;
-  const measured = points.length > 1;
-  if (!measured) { ctx.textAlign = "center"; ctx.fillText("Enter SPS and torque data", w / 2, h / 2); return; }
-  const mapped = dynoPlotCoordinates(points, mode), curve = calculateDynoCurve(points, mode);
-  let minX = mapped[0].x, maxX = mapped[mapped.length - 1].x, minY = Math.min(0, ...mapped.map(p => p.y)), maxY = Math.max(...mapped.map(p => p.y)); if (maxX === minX) maxX += 100; if (maxY === minY) maxY += 100;
-  const x = (v: number) => left + (v - minX) / (maxX - minX) * pw, y = (v: number) => top + (1 - (v - minY) / (maxY - minY)) * ph;
-  const xLabel = mode === "torque-sps" ? "SPS" : "RPM", yLabel = mode === "torque-sps" ? "Torque" : "BHP";
-  for (let i = 0; i <= 5; i++) { const gy = top + ph * i / 5, gx = left + pw * i / 5; ctx.beginPath(); ctx.moveTo(left, gy); ctx.lineTo(w - right, gy); ctx.moveTo(gx, top); ctx.lineTo(gx, h - bottom); ctx.stroke(); ctx.textAlign = "right"; ctx.fillText((maxY - (maxY - minY) * i / 5).toFixed(0), left - 7, gy + 4); ctx.textAlign = "center"; ctx.fillText((minX + (maxX - minX) * i / 5).toFixed(0), gx, h - 14); }
-  ctx.strokeStyle = text; ctx.beginPath(); ctx.moveTo(left, top); ctx.lineTo(left, h - bottom); ctx.lineTo(w - right, h - bottom); ctx.stroke();
-  ctx.textAlign = "center"; ctx.fillStyle = muted; ctx.fillText(xLabel, left + pw / 2, h - 2);
-  ctx.save(); ctx.translate(12, top + ph / 2); ctx.rotate(-Math.PI / 2); ctx.fillText(yLabel, 0, 0); ctx.restore();
-  ctx.strokeStyle = accent; ctx.lineWidth = 3; ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.beginPath();
-  if (mapped.length === 1) { ctx.arc(x(mapped[0].x), y(mapped[0].y), 4, 0, Math.PI * 2); ctx.stroke(); return; }
+function drawDyno(canvas: HTMLCanvasElement, points: DynoPoint[], mode: DynoGraphMode, options: DynoDrawOptions = {}) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = options.pixelRatio ?? Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(280, options.width ?? rect.width), h = Math.max(260, options.height ?? rect.height);
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  const ctx = canvas.getContext("2d"); if (!ctx) return;
+  ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+  const css = getComputedStyle(document.documentElement);
+  const color = (name: string) => css.getPropertyValue(name).trim();
+  const surface = color("--surface"), muted = color("--muted"), border = color("--border"), accent = color("--accent"), text = color("--text");
+  ctx.fillStyle = surface; ctx.fillRect(0, 0, w, h);
+
+  const standalone = options.standalone ?? false;
+  const left = standalone ? 175 : 58, right = standalone ? 110 : 18;
+  const top = standalone ? 125 : 18, bottom = standalone ? 170 : 44;
+  const pw = Math.max(1, w - left - right), ph = Math.max(1, h - top - bottom);
+  ctx.font = standalone ? "18px system-ui" : "12px system-ui";
+  ctx.strokeStyle = border; ctx.fillStyle = muted; ctx.lineWidth = 1;
+  if (points.length <= 1) {
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("Enter SPS and torque data", w / 2, h / 2);
+    return;
+  }
+
+  const mapped = dynoPlotCoordinates(points, mode);
+  let minX = mapped[0].x, maxX = mapped[0].x, minY = mapped[0].y, maxY = mapped[0].y;
+  for (const point of mapped) {
+    minX = Math.min(minX, point.x); maxX = Math.max(maxX, point.x);
+    minY = Math.min(minY, point.y); maxY = Math.max(maxY, point.y);
+  }
+  minY = Math.min(0, minY);
+  if (maxX <= minX) maxX = minX + 100;
+  if (maxY <= minY) maxY = minY + 100;
+  const x = (value: number) => left + (value - minX) / (maxX - minX) * pw;
+  const y = (value: number) => top + (1 - (value - minY) / (maxY - minY)) * ph;
+  const xLabel = mode === "torque-sps" ? "SPS" : "RPM";
+  const yLabel = mode === "torque-sps" ? "Torque" : "BHP";
+
+  if (standalone) {
+    ctx.textAlign = "left"; ctx.textBaseline = "alphabetic"; ctx.fillStyle = text; ctx.font = "bold 28px system-ui";
+    ctx.fillText(mode === "torque-sps" ? "TORQUE VS SPS" : "BHP VS RPM", left, 38);
+    ctx.fillStyle = muted; ctx.font = "20px system-ui"; ctx.fillText(yLabel.toUpperCase(), left, 82);
+  }
+
+  // Clean plotting area: axes and short external ticks only, no interior grid.
+  const axisBottom = top + ph, axisRight = left + pw;
+  ctx.strokeStyle = border; ctx.lineWidth = 1; ctx.beginPath();
+  ctx.moveTo(left, top); ctx.lineTo(left, axisBottom);
+  ctx.moveTo(axisRight, top); ctx.lineTo(axisRight, axisBottom);
+  ctx.moveTo(left, axisBottom); ctx.lineTo(axisRight, axisBottom);
+  ctx.stroke();
+
+  for (let i = 0; i <= 5; i++) {
+    const ratio = i / 5;
+    const gy = top + ph * ratio, gx = left + pw * ratio;
+    const yValue = maxY - (maxY - minY) * ratio;
+    const xValue = minX + (maxX - minX) * ratio;
+    ctx.beginPath();
+    ctx.moveTo(left - 8, gy); ctx.lineTo(left, gy);
+    ctx.moveTo(axisRight, gy); ctx.lineTo(axisRight + 8, gy);
+    ctx.moveTo(gx, axisBottom); ctx.lineTo(gx, axisBottom + 8);
+    ctx.stroke();
+    ctx.fillStyle = muted; ctx.font = standalone ? "18px system-ui" : "12px system-ui";
+    ctx.textAlign = "right"; ctx.textBaseline = "alphabetic";
+    ctx.fillText(yValue.toFixed(1), left - 13, gy + 4);
+    ctx.textAlign = "center";
+    ctx.fillText(xValue.toFixed(0), gx, axisBottom + (standalone ? 24 : 20));
+  }
+
+  if (standalone) {
+    ctx.fillStyle = muted; ctx.font = "20px system-ui"; ctx.textAlign = "center";
+    ctx.fillText(xLabel.toUpperCase(), left + pw / 2, axisBottom + 58);
+  } else {
+    ctx.fillStyle = muted; ctx.font = "12px system-ui"; ctx.textAlign = "center";
+    ctx.fillText(xLabel, left + pw / 2, h - 2);
+    ctx.save(); ctx.translate(13, top + ph / 2); ctx.rotate(-Math.PI / 2);
+    ctx.fillText(yLabel, 0, 0); ctx.restore();
+  }
+
+  const curve = calculateDynoCurve(points, mode, pw * dpr, ph * dpr);
+  ctx.strokeStyle = accent; ctx.lineWidth = standalone ? 4 : 3; ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.beginPath();
   ctx.moveTo(x(curve[0].x), y(curve[0].y));
   for (let i = 1; i < curve.length; i++) ctx.lineTo(x(curve[i].x), y(curve[i].y));
-  ctx.stroke(); ctx.fillStyle = accent; mapped.forEach(p => { ctx.beginPath(); ctx.arc(x(p.x), y(p.y), 3.5, 0, Math.PI * 2); ctx.fill(); });
+  ctx.stroke();
+  ctx.fillStyle = accent;
+  mapped.forEach(point => { ctx.beginPath(); ctx.arc(x(point.x), y(point.y), standalone ? 4.5 : 3.5, 0, Math.PI * 2); ctx.fill(); });
 }
 
 // ── Settings tool ─────────────────────────────────────────────────────────────

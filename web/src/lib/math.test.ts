@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateCrank, calculateDyno, calculateDynoCurve, dynoPlotCoordinates, calculateGear, calculatePiston, calculateWheel, round3 } from "./math";
+import { calculateCrank, calculateDyno, calculateDynoCurve, dynoPlotCoordinates, formatDynoExportFilename, calculateGear, calculatePiston, calculateWheel, round3 } from "./math";
 
 describe("Go-reference math", () => {
   it("matches gear golden values", () => {
@@ -47,5 +47,22 @@ describe("Go-reference math", () => {
       expect(sample.y).toBeGreaterThanOrEqual(Math.min(ys[segment], ys[segment + 1]) - 1e-9);
       expect(sample.y).toBeLessThanOrEqual(Math.max(ys[segment], ys[segment + 1]) + 1e-9);
     }
+  });
+
+  it("adapts curve sampling to the rendered pixel size", () => {
+    const points = calculateDyno([
+      { sps: "10", torque: "20" }, { sps: "20", torque: "8" },
+      { sps: "30", torque: "18" }, { sps: "40", torque: "12" },
+    ]);
+    const small = calculateDynoCurve(points, "bhp-rpm", 160, 80);
+    const large = calculateDynoCurve(points, "bhp-rpm", 1600, 800);
+    expect(large.length).toBeGreaterThan(small.length);
+    expect(large.every(point => Number.isFinite(point.x) && Number.isFinite(point.y))).toBe(true);
+  });
+
+  it("formats compact local-time export names and same-second suffixes", () => {
+    const date = new Date(2026, 9, 22, 22, 55, 10);
+    expect(formatDynoExportFilename(date)).toBe("dyno-26-10-22-22-55-10.png");
+    expect(formatDynoExportFilename(date, 1)).toBe("dyno-26-10-22-22-55-10-01.png");
   });
 });
