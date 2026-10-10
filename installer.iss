@@ -43,10 +43,7 @@ Source: "dist\PC-Gear-Calculator-Windows-x64.exe"; \
     Flags: ignoreversion
 
 
-Source: "dist\PC-Gear-Calculator-Updater-Windows-x64.exe"; \
-    DestDir: "{app}\.update"; \
-    DestName: "PC-Gear-Calculator-Updater.exe"; \
-    Flags: ignoreversion
+
 Source: "dist\PC-Gear-Calculator-Updater-Windows-x64.exe"; \
     DestDir: "{app}\.update"; \
     DestName: "PC-Gear-Calculator-Updater.exe"; \
