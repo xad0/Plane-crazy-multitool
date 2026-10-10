@@ -16,7 +16,7 @@ AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
 
-; Portable-style installation.
+; Portable-style installation with the bundled updater.
 ; Default location is Downloads\PC-Multitool, but the user can change it.
 DefaultDirName={%USERPROFILE}\Downloads\PC-Multitool
 DisableDirPage=no
@@ -40,6 +40,13 @@ WizardStyle=modern
 Source: "dist\PC-Gear-Calculator-Windows-x64.exe"; \
     DestDir: "{app}"; \
     DestName: "PC-Gear-Calculator.exe"; \
+    Flags: ignoreversion
+
+
+
+Source: "dist\PC-Gear-Calculator-Updater-Windows-x64.exe"; \
+    DestDir: "{app}\.update"; \
+    DestName: "PC-Gear-Calculator-Updater.exe"; \
     Flags: ignoreversion
 
 [Run]

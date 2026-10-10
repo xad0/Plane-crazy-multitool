@@ -9,8 +9,40 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Test Go packages
+        run: go test -count=1 . ./cmd/...
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Test web app
+        working-directory: web
+        run: npm test
+
+      - name: Build web app
+        working-directory: web
+        run: npm run build
+
   build-linux:
     runs-on: ubuntu-latest
+    needs: test
 
     steps:
       - uses: actions/checkout@v4
@@ -62,6 +94,7 @@ jobs:
 
   build-macos:
     runs-on: macos-latest
+    needs: test
 
     steps:
       - uses: actions/checkout@v4
@@ -140,6 +173,7 @@ jobs:
 
   build-windows:
     runs-on: windows-latest
+    needs: test
 
     steps:
       - uses: actions/checkout@v4
@@ -181,13 +215,34 @@ jobs:
             -DestinationPath "dist/PC-Multitool-Windows-x64-v$version.zip" `
             -Force
 
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $version = "${env:GITHUB_REF_NAME}".TrimStart("v")
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+
+          if (-not (Test-Path $iscc)) {
+            throw "Inno Setup compiler not found at $iscc"
+          }
+
+          & $iscc `
+            "/DMyAppVersion=$version" `
+            "installer.iss"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup failed with exit code $LASTEXITCODE"
+          }
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: dist/PC-Multitool-Windows-x64-v*.zip
+          path: |
+            dist/PC-Multitool-Windows-x64-v*.zip
+            dist/PC-Multitool-Setup-v*.exe
 
   release:
     needs:
+      - test
       - build-linux
       - build-macos
       - build-windows
@@ -195,15 +250,50 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: release-files
           merge-multiple: true
+
+      - name: Validate release importance metadata
+        shell: bash
+        run: |
+          tag_message="$(git for-each-ref "refs/tags/${GITHUB_REF_NAME}" --format='%(contents)')"
+          invalid_lines="$(printf '%s\n' "$tag_message" | grep -iE '^[[:space:]]*importance:' | grep -ivE '^[[:space:]]*importance:[[:space:]]*(normal|important|critical)[[:space:]]*$' || true)"
+          if [ -n "$invalid_lines" ]; then
+            echo "Invalid release importance annotation:" >&2
+            printf '%s\n' "$invalid_lines" >&2
+            echo "Use one line: importance: normal, importance: important, or importance: critical." >&2
+            exit 1
+          fi
+
+      - name: Determine release importance
+        id: importance
+        shell: bash
+        run: |
+          importance="$(
+            git for-each-ref               "refs/tags/${GITHUB_REF_NAME}"               --format='%(contents)' |
+            sed -nE               's/^[[:space:]]*importance:[[:space:]]*(normal|important|critical)[[:space:]]*$/\1/ip' |
+            head -n 1
+          )"
+
+          if [ -z "$importance" ]; then
+            importance="normal"
+          fi
+
+          echo "value=$importance" >> "$GITHUB_OUTPUT"
+          echo "Release importance: $importance"
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            <!-- pc-multitool-importance: ${{ steps.importance.outputs.value }} -->
           files: |
-            release-files/*.zip
+            release-files/*

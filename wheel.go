@@ -380,20 +380,14 @@ func (m model) viewWheel() tea.View {
 				"TIRE SIZE",
 			),
 			valueStyle.Render(
-				fmt.Sprintf(
-					"%d sm",
-					data.TireSize,
-				),
+				m.markCopyValue(strconv.Itoa(data.TireSize), fmt.Sprintf("%d sm", data.TireSize)),
 			),
 			"",
 			labelStyle.Render(
 				"ANGLE LOCK",
 			),
 			valueStyle.Render(
-				fmt.Sprintf(
-					"%.3f°",
-					data.AngleLock,
-				),
+				m.markCopyValue(fmt.Sprintf("%.3f", data.AngleLock), fmt.Sprintf("%.3f°", data.AngleLock)),
 			),
 			"",
 			labelStyle.Render(
@@ -406,10 +400,7 @@ func (m model) viewWheel() tea.View {
 			append(
 				rightLines,
 				valueStyle.Render(
-					fmt.Sprintf(
-						"%.3f°",
-						data.CenterAngle,
-					),
+					m.markCopyValue(fmt.Sprintf("%.3f", data.CenterAngle), fmt.Sprintf("%.3f°", data.CenterAngle)),
 				),
 			)
 	} else {
@@ -430,29 +421,21 @@ func (m model) viewWheel() tea.View {
 				"OFFSET",
 			),
 			valueStyle.Render(
-				fmt.Sprintf(
-					"%.3f",
-					Round3(data.Offset),
-				),
+				m.markCopyValue(fmt.Sprintf("%.3f", Round3(data.Offset)), fmt.Sprintf("%.3f", Round3(data.Offset))),
 			),
 			"",
 			labelStyle.Render(
 				"COMPRESSORS",
 			),
 			valueStyle.Render(
-				strconv.Itoa(
-					data.Compressors,
-				),
+				m.markCopyValue(strconv.Itoa(data.Compressors), strconv.Itoa(data.Compressors)),
 			),
 			"",
 			labelStyle.Render(
 				"COMPRESSOR VALUE",
 			),
 			valueStyle.Render(
-				fmt.Sprintf(
-					"%.3f",
-					data.CompressorValue,
-				),
+				m.markCopyValue(fmt.Sprintf("%.3f", data.CompressorValue), fmt.Sprintf("%.3f", data.CompressorValue)),
 			),
 		)
 

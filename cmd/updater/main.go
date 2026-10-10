@@ -18,16 +18,15 @@ const (
 )
 
 func main() {
-	if len(os.Args) != 4 {
-		fail("usage: updater <new-file> <target> <parent-pid>")
+	args, err := parseUpdaterArgs(os.Args[1:])
+	if err != nil {
+		fail(err.Error())
 	}
 
-	newPath := os.Args[1]
-	targetPath := os.Args[2]
-	parentPID, err := strconv.Atoi(os.Args[3])
-	if err != nil {
-		fail(fmt.Sprintf("invalid parent PID: %v", err))
-	}
+	newPath := args.newPath
+	targetPath := args.targetPath
+	parentPID := args.parentPID
+	version := args.version
 
 	// Give the main application time to terminate.
 	time.Sleep(750 * time.Millisecond)
@@ -47,11 +46,48 @@ func main() {
 		time.Sleep(retryDelay)
 	}
 
-	if err := installUpdate(newPath, targetPath); err != nil {
+	if err := installUpdate(
+		newPath,
+		targetPath,
+		version,
+	); err != nil {
 		fail(err.Error())
 	}
 
 	cleanup(newPath)
+}
+
+type updaterArguments struct {
+	newPath    string
+	targetPath string
+	parentPID  int
+	version    string
+}
+
+// parseUpdaterArgs accepts the original three arguments and the newer optional
+// version argument. Keeping the old form valid allows installed v2.1.0 helpers
+// to work with a newer main application.
+func parseUpdaterArgs(args []string) (updaterArguments, error) {
+	if len(args) != 3 && len(args) != 4 {
+		return updaterArguments{}, fmt.Errorf("usage: updater <new-file> <target> <parent-pid> [version]")
+	}
+
+	parentPID, err := strconv.Atoi(args[2])
+	if err != nil {
+		return updaterArguments{}, fmt.Errorf("invalid parent PID: %w", err)
+	}
+
+	version := ""
+	if len(args) == 4 {
+		version = args[3]
+	}
+
+	return updaterArguments{
+		newPath:    args[0],
+		targetPath: args[1],
+		parentPID:  parentPID,
+		version:    version,
+	}, nil
 }
 
 func processIsRunning(pid int) bool {
@@ -141,7 +177,11 @@ func splitFields(s string) []string {
 	return fields
 }
 
-func installUpdate(zipPath, targetPath string) error {
+func installUpdate(
+	zipPath string,
+	targetPath string,
+	version string,
+) error {
 	targetDir := filepath.Dir(targetPath)
 
 	info, err := os.Stat(targetPath)
@@ -218,7 +258,15 @@ func installUpdate(zipPath, targetPath string) error {
 		}
 	}
 
+	if err := writeUpdateCompletion(version); err != nil {
+		// The update itself is valid even if the informational marker
+		// cannot be written.
+		_ = err
+	}
+
 	if err := startUpdatedApp(targetPath); err != nil {
+		removeUpdateCompletion()
+
 		_ = os.Remove(targetPath)
 		_ = os.Rename(backupPath, targetPath)
 
@@ -296,6 +344,71 @@ func extractApplication(
 		"ZIP does not contain %s",
 		expected,
 	)
+}
+
+func updateCompletionPath() string {
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+
+	dir :=
+		filepath.Join(
+			cacheDir,
+			"pc-multitool",
+		)
+
+	if err := os.MkdirAll(
+		dir,
+		0755,
+	); err != nil {
+		return ""
+	}
+
+	return filepath.Join(
+		dir,
+		"update-complete",
+	)
+}
+
+func writeUpdateCompletion(version string) error {
+	version = string([]byte(version))
+	if version == "" {
+		return nil
+	}
+
+	path := updateCompletionPath()
+	if path == "" {
+		return nil
+	}
+
+	tempPath := path + ".tmp"
+
+	if err :=
+		os.WriteFile(
+			tempPath,
+			[]byte(version),
+			0600,
+		); err != nil {
+		return err
+	}
+
+	if err := os.Rename(
+		tempPath,
+		path,
+	); err != nil {
+		_ = os.Remove(tempPath)
+		return err
+	}
+
+	return nil
+}
+
+func removeUpdateCompletion() {
+	path := updateCompletionPath()
+	if path != "" {
+		_ = os.Remove(path)
+	}
 }
 
 func startUpdatedApp(targetPath string) error {

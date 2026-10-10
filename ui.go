@@ -115,6 +115,10 @@ type model struct {
 	updateChecking  bool
 	updateReadyPath string
 
+	updateChannelPrompt          bool
+	updateChannelPromptDowngrade bool
+	startupMessage               string
+
 	referenceSmallestInput textinput.Model
 	referenceMaximumInput  textinput.Model
 	referenceScroll        int
@@ -136,9 +140,12 @@ type model struct {
 	dynoFieldIndex int
 	dynoScroll     int
 	dynoFullscreen bool
+	dynoMode       dynoGraphMode
 
 	setupIndex       int
 	setupExportInput textinput.Model
+
+	copy *copyState
 }
 
 func newInput(value string) textinput.Model {
@@ -212,6 +219,8 @@ func initialModel() model {
 		setupIndex:       0,
 		settingsIndex:    0,
 		updatesIndex:     0,
+		startupMessage:   consumeUpdateCompletion(),
+		copy:             &copyState{},
 	}
 
 	m.updateThemeIndex()
@@ -229,7 +238,115 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.copy == nil {
+		m.copy = &copyState{}
+	}
 	switch msg := msg.(type) {
+
+	case updateChannelCheckMsg:
+		m.updateChecking = false
+
+		// Ignore a stale result if the user changed channels again.
+		if msg.channel != m.cfg.UpdateChannel {
+			return m, nil
+		}
+
+		if msg.err != nil {
+			m.updateInfo = nil
+			m.updateChannelPrompt = false
+			m.updateChannelPromptDowngrade = false
+			m.updateStatus =
+				"Unable to check " +
+					updateChannelName(msg.channel) +
+					" package."
+			return m, nil
+		}
+
+		m.updateInfo = &msg.info
+
+		if msg.info.LatestVersion == msg.info.CurrentVersion ||
+			msg.channel == updateChannelWorkshop {
+
+			m.updateChannelPrompt = false
+			m.updateChannelPromptDowngrade = false
+			m.updateStatus =
+				"Switched to " +
+					updateChannelName(msg.channel) +
+					"."
+			return m, nil
+		}
+
+		if msg.info.CurrentVersion == "dev" ||
+			isNewerVersion(
+				msg.info.LatestVersion,
+				msg.info.CurrentVersion,
+			) {
+
+			m.updateChannelPrompt = true
+			m.updateChannelPromptDowngrade = false
+			m.updateStatus =
+				"Update to " +
+					msg.info.LatestVersion +
+					"? [ENTER] yes [ESC] later"
+			return m, nil
+		}
+
+		if msg.channel == updateChannelIronclad &&
+			isNewerVersion(
+				msg.info.CurrentVersion,
+				msg.info.LatestVersion,
+			) {
+
+			m.updateChannelPrompt = true
+			m.updateChannelPromptDowngrade = true
+			m.updateStatus =
+				"Downgrade to " +
+					msg.info.LatestVersion +
+					" (Ironclad)? [ENTER] yes [ESC] cancel"
+			return m, nil
+		}
+
+		m.updateChannelPrompt = false
+		m.updateChannelPromptDowngrade = false
+		m.updateStatus =
+			"Switched to " +
+				updateChannelName(msg.channel) +
+				"."
+
+		return m, nil
+
+	case updateButtonCheckMsg:
+		m.updateChecking = false
+
+		if msg.err != nil {
+			m.updateStatus =
+				"Unable to check for updates."
+			return m, nil
+		}
+
+		m.updateInfo = &msg.info
+
+		if !isNewerVersion(
+			msg.info.LatestVersion,
+			msg.info.CurrentVersion,
+		) {
+			m.updateStatus = "You are up to date."
+			return m, nil
+		}
+
+		m.updateChecking = true
+		m.updateStatus = "Downloading and verifying..."
+
+		asset := msg.info.Asset
+
+		return m, func() tea.Msg {
+			path, err := downloadUpdate(asset)
+
+			return updateDownloadMsg{
+				path: path,
+				err:  err,
+			}
+		}
 
 	case updateCheckMsg:
 		m.updateChecking = false
@@ -271,6 +388,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err :=
 			startUpdateHelper(
 				msg.path,
+				m.updateInfo.LatestVersion,
 			); err != nil {
 
 			os.Remove(msg.path)
@@ -293,7 +411,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, nil
 
+	case clearCopyToastMsg:
+		if m.copy.toastTimerID == msg.id {
+			m.copy.toastText = ""
+		}
+		return m, nil
+
+	case tea.MouseMotionMsg:
+		m.copy.hoverX = msg.X
+		m.copy.hoverY = msg.Y
+		m.copy.hasHover = true
+		return m, nil
+
 	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
+			if raw, ok := m.copy.checkClick(msg.X, msg.Y); ok {
+				cmd := m.copyToClipboard(raw)
+				return m, cmd
+			}
+		}
 		return m.handleMouse(msg)
 
 	case tea.MouseWheelMsg:
@@ -573,8 +709,30 @@ func (m model) viewHome() tea.View {
 			subtitleStyle.Render(
 				"Plane Crazy Engineering Tools",
 			),
-			"",
 		)
+
+	if m.startupMessage != "" {
+		lines =
+			append(
+				lines,
+				"",
+				subtitleStyle.Render(
+					"✓ Updated to "+m.startupMessage,
+				),
+			)
+
+		lines =
+			append(
+				lines,
+				"",
+			)
+	} else {
+		lines =
+			append(
+				lines,
+				"",
+			)
+	}
 
 	for i, item := range items {
 
@@ -1088,18 +1246,33 @@ type updateCheckMsg struct {
 	err  error
 }
 
+type updateButtonCheckMsg struct {
+	info updateInfo
+	err  error
+}
+
 type updateDownloadMsg struct {
 	path string
 	err  error
 }
 
-func (m model) updateUpdates(
-	msg tea.KeyPressMsg,
-) (tea.Model, tea.Cmd) {
+type updateChannelCheckMsg struct {
+	channel string
+	info    updateInfo
+	err     error
+}
+
+func (m model) updateItems() []string {
 
 	items :=
 		[]string{
 			"Check for updates",
+			fmt.Sprintf(
+				"Update channel • %s",
+				updateChannelName(
+					m.cfg.UpdateChannel,
+				),
+			),
 		}
 
 	if m.updateInfo != nil &&
@@ -1121,6 +1294,96 @@ func (m model) updateUpdates(
 			"Back",
 		)
 
+	return items
+}
+
+func (m model) startChannelTargetCheck() (tea.Model, tea.Cmd) {
+	m.updateInfo = nil
+	m.updateChannelPrompt = false
+	m.updateChannelPromptDowngrade = false
+
+	channel := m.cfg.UpdateChannel
+
+	if channel == updateChannelWorkshop {
+		m.updateChecking = false
+		m.updateStatus = "Switched to Workshop."
+		return m, nil
+	}
+
+	m.updateChecking = true
+	m.updateStatus =
+		"Checking " +
+			updateChannelName(channel) +
+			" package..."
+
+	return m, func() tea.Msg {
+		info, err :=
+			getChannelTargetUpdate(
+				channel,
+				Version,
+			)
+
+		return updateChannelCheckMsg{
+			channel: channel,
+			info:    info,
+			err:     err,
+		}
+	}
+}
+
+func (m model) updateUpdates(
+	msg tea.KeyPressMsg,
+) (tea.Model, tea.Cmd) {
+
+	if m.updateChannelPrompt {
+		switch msg.String() {
+
+		case "q", "ctrl+c":
+			return m, tea.Quit
+
+		case "enter", "y":
+
+			if m.updateInfo == nil ||
+				m.updateInfo.Asset.BrowserDownloadURL == "" {
+				m.updateChannelPrompt = false
+				m.updateStatus =
+					"Update package is unavailable."
+				return m, nil
+			}
+
+			m.updateChannelPrompt = false
+			m.updateChannelPromptDowngrade = false
+			m.updateChecking = true
+			m.updateStatus =
+				"Downloading and verifying..."
+
+			asset := m.updateInfo.Asset
+
+			return m, func() tea.Msg {
+				path, err := downloadUpdate(asset)
+				return updateDownloadMsg{
+					path: path,
+					err:  err,
+				}
+			}
+
+		case "esc", "n":
+			m.updateChannelPrompt = false
+			m.updateChannelPromptDowngrade = false
+			m.updateStatus = "Kept current package."
+			return m, nil
+
+		default:
+			m.updateChannelPrompt = false
+			m.updateChannelPromptDowngrade = false
+			m.updateStatus = "Kept current package."
+			return m, nil
+		}
+	}
+
+	items :=
+		m.updateItems()
+
 	switch msg.String() {
 
 	case "q", "ctrl+c":
@@ -1139,15 +1402,31 @@ func (m model) updateUpdates(
 
 		m.updatesIndex++
 
-		if m.updatesIndex >= len(items) {
+		if m.updatesIndex >=
+			len(items) {
+
 			m.updatesIndex = 0
+		}
+
+	case "left":
+
+		if m.updatesIndex == 1 {
+			m.cycleUpdateChannel(-1)
+			return m.startChannelTargetCheck()
+		}
+
+	case "right":
+
+		if m.updatesIndex == 1 {
+			m.cycleUpdateChannel(1)
+			return m.startChannelTargetCheck()
 		}
 
 	case "enter":
 
-		switch items[m.updatesIndex] {
+		switch m.updatesIndex {
 
-		case "Check for updates":
+		case 0:
 
 			if m.updateChecking {
 				return m, nil
@@ -1158,6 +1437,7 @@ func (m model) updateUpdates(
 				"Checking for updates..."
 
 			return m, func() tea.Msg {
+
 				info, err :=
 					getLatestUpdate()
 
@@ -1167,7 +1447,21 @@ func (m model) updateUpdates(
 				}
 			}
 
-		case "Update":
+		case 1:
+
+			m.cycleUpdateChannel(1)
+			return m.startChannelTargetCheck()
+
+		default:
+
+			if m.updatesIndex ==
+				len(items)-1 {
+
+				m.page = pageHome
+				m.homeIndex = 6
+
+				return m, nil
+			}
 
 			if m.updateInfo == nil ||
 				!isNewerVersion(
@@ -1184,26 +1478,17 @@ func (m model) updateUpdates(
 
 			m.updateChecking = true
 			m.updateStatus =
-				"Downloading and verifying..."
-
-			asset :=
-				m.updateInfo.Asset
+				"Checking for the newest package..."
 
 			return m, func() tea.Msg {
+				info, err :=
+					getLatestUpdate()
 
-				path, err :=
-					downloadUpdate(asset)
-
-				return updateDownloadMsg{
-					path: path,
+				return updateButtonCheckMsg{
+					info: info,
 					err:  err,
 				}
 			}
-
-		case "Back":
-
-			m.page = pageHome
-			m.homeIndex = 6
 		}
 
 	case "esc":
@@ -1224,41 +1509,39 @@ func (m model) viewUpdates() tea.View {
 		)
 
 	items :=
-		[]string{
-			"Check for updates",
-		}
+		m.updateItems()
+
+	title :=
+		fmt.Sprintf(
+			"UPDATES  •  CHANNEL %s",
+			updateChannelName(
+				m.cfg.UpdateChannel,
+			),
+		)
+
+	if m.updateInfo != nil {
+
+		title =
+			fmt.Sprintf(
+				"%s  •  CURRENT %s  •  LATEST %s",
+				title,
+				m.updateInfo.CurrentVersion,
+				m.updateInfo.LatestVersion,
+			)
+	}
 
 	if m.updateInfo != nil &&
 		isNewerVersion(
 			m.updateInfo.LatestVersion,
 			m.updateInfo.CurrentVersion,
 		) {
-
-		items =
-			append(
-				items,
-				"Update",
-			)
-	}
-
-	items =
-		append(
-			items,
-			"Back",
-		)
-
-	title := "UPDATES"
-
-	if m.updateInfo != nil {
-		title = fmt.Sprintf(
-			"UPDATES  •  CURRENT %s  •  LATEST %s",
-			m.updateInfo.CurrentVersion,
-			m.updateInfo.LatestVersion,
-		)
+		title += "  •  NEW UPDATE AVAILABLE"
 	}
 
 	if m.updateStatus != "" {
-		title += "  •  " + m.updateStatus
+		title +=
+			"  •  " +
+				m.updateStatus
 	}
 
 	return m.renderMenu(
@@ -1277,6 +1560,8 @@ func (m model) updateSettings(
 		[]string{
 			"Appearance",
 			"Layout",
+			"Update channel  •  " +
+				updateChannelName(m.cfg.UpdateChannel),
 			"Back",
 		}
 
@@ -1300,7 +1585,18 @@ func (m model) updateSettings(
 			m.settingsIndex = 0
 		}
 
+	case "left":
+		if m.settingsIndex == 2 {
+			m.cycleUpdateChannel(-1)
+		}
+
+	case "right":
+		if m.settingsIndex == 2 {
+			m.cycleUpdateChannel(1)
+		}
+
 	case "enter":
+
 		switch m.settingsIndex {
 
 		case 0:
@@ -1313,6 +1609,9 @@ func (m model) updateSettings(
 			m.page = pageToolCustomizeSelect
 
 		case 2:
+			m.cycleUpdateChannel(1)
+
+		case 3:
 			m.page = pageHome
 			m.homeIndex = 5
 		}
@@ -1337,6 +1636,8 @@ func (m model) viewSettings() tea.View {
 		[]string{
 			"Appearance",
 			"Layout",
+			"Update channel  •  " +
+				updateChannelName(m.cfg.UpdateChannel),
 			"Back",
 		}
 
@@ -3037,12 +3338,9 @@ func (m model) handleMenuMouse(
 
 	switch m.page {
 	case pageSettings:
-		itemCount = 3
+		itemCount = 4
 	case pageUpdates:
-		itemCount = 2
-		if m.updateInfo != nil && isNewerVersion(m.updateInfo.LatestVersion, m.updateInfo.CurrentVersion) {
-			itemCount = 3
-		}
+		itemCount = len(m.updateItems())
 	case pageCustomize:
 		itemCount = len(m.customizeItems())
 	case pageToolCustomizeSelect:
@@ -3392,74 +3690,69 @@ func (m model) handleMouse(
 // ─────────────────────────────────────────────────────────────
 
 func (m model) View() tea.View {
-
-	switch m.page {
-
-	case pageHome:
-		return m.viewHome()
-
-	case pageSetup:
-		return m.viewSetup()
-
-	case pageMain:
-		return m.viewMain()
-
-	case pageCrank:
-		return m.viewCrank()
-
-	case pageWheel:
-		return m.viewWheel()
-
-	case pageDyno:
-		return m.viewDyno()
-	case pagePiston:
-		return m.viewPiston()
-
-	case pageSettings:
-		return m.viewSettings()
-
-	case pageUpdates:
-		return m.viewUpdates()
-
-	case pageCustomize:
-		return m.viewCustomize()
-
-	case pageToolCustomizeSelect:
-		return m.viewToolCustomizeSelect()
-
-	case pageAppearance:
-		return m.viewAppearance()
-
-	case pageThemes:
-		return m.viewThemes()
-
-	case pageFlavors:
-		return m.viewCatppuccinFlavors()
-
-	case pageAccents:
-		return m.viewAccents()
-
-	case pageTransparency:
-		return m.viewTransparency()
-
-	case pageLayout:
-		return m.viewLayout()
-
-	case pageReference:
-		return m.viewReference()
-
-	case pageCalculator:
-		return m.viewCalculator()
-
-	case pageReset:
-		return m.viewReset()
-
-	case pageAbout:
-		return m.viewAbout()
-
-	default:
-		return m.viewMain()
+	if m.copy == nil {
+		m.copy = &copyState{}
 	}
+	m.copy.clearTargets()
+
+	var view tea.View
+	switch m.page {
+	case pageHome:
+		view = m.viewHome()
+	case pageSetup:
+		view = m.viewSetup()
+	case pageMain:
+		view = m.viewMain()
+	case pageCrank:
+		view = m.viewCrank()
+	case pageWheel:
+		view = m.viewWheel()
+	case pageDyno:
+		view = m.viewDyno()
+	case pagePiston:
+		view = m.viewPiston()
+	case pageSettings:
+		view = m.viewSettings()
+	case pageUpdates:
+		view = m.viewUpdates()
+	case pageCustomize:
+		view = m.viewCustomize()
+	case pageToolCustomizeSelect:
+		view = m.viewToolCustomizeSelect()
+	case pageAppearance:
+		view = m.viewAppearance()
+	case pageThemes:
+		view = m.viewThemes()
+	case pageFlavors:
+		view = m.viewCatppuccinFlavors()
+	case pageAccents:
+		view = m.viewAccents()
+	case pageTransparency:
+		view = m.viewTransparency()
+	case pageLayout:
+		view = m.viewLayout()
+	case pageReference:
+		view = m.viewReference()
+	case pageCalculator:
+		view = m.viewCalculator()
+	case pageReset:
+		view = m.viewReset()
+	case pageAbout:
+		view = m.viewAbout()
+	default:
+		view = m.viewMain()
+	}
+
+	p := getPalette(m.theme, m.accent)
+	view.SetContent(m.copy.finalizeContent(view.Content, p))
+
+	// CellMotion only reports movement while a button is held. Hover-based copy
+	// highlighting needs AllMotion, limited to calculator screens.
+	switch m.page {
+	case pageMain, pageCrank, pageWheel, pagePiston:
+		view.MouseMode = tea.MouseModeAllMotion
+	}
+	return view
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -4477,6 +4770,7 @@ func (m model) referenceContent(
 					c,
 					columns,
 					spacing,
+					m.markCopyValue,
 				),
 			)
 	}
@@ -4883,7 +5177,7 @@ func (m model) viewMain() tea.View {
 							label,
 						),
 						valueStyle.Render(
-							value,
+							m.markCopyValue(strings.TrimSuffix(value, "°"), value),
 						),
 					)
 
@@ -5378,7 +5672,7 @@ func (m model) renderStackedCalculator(
 
 			value =
 				valueStyle.Render(
-					item.value,
+					m.markCopyValue(strings.TrimSuffix(item.value, "°"), item.value),
 				)
 		}
 
@@ -5871,7 +6165,24 @@ func buildReferenceRow(
 	compressors int,
 	columns []refColumn,
 	spacing int,
+	markCopy ...func(rawValue, displayText string) string,
 ) string {
+
+	markCell := func(rawValue, displayText string) string {
+		if len(markCopy) > 0 && markCopy[0] != nil {
+			return markCopy[0](rawValue, displayText)
+		}
+		return displayText
+	}
+
+	markPaddedCell := func(rawValue, paddedDisplay string) string {
+		visible := strings.TrimLeft(paddedDisplay, " ")
+		padding := len(paddedDisplay) - len(visible)
+		if padding <= 0 {
+			return markCell(rawValue, visible)
+		}
+		return paddedDisplay[:padding] + markCell(rawValue, visible)
+	}
 
 	var parts []string
 
@@ -5880,70 +6191,22 @@ func buildReferenceRow(
 		switch column {
 
 		case refTeeth:
-
-			parts =
-				append(
-					parts,
-					fmt.Sprintf(
-						"%5d",
-						teeth,
-					),
-				)
+			parts = append(parts, fmt.Sprintf("%5d", teeth))
 
 		case refFull:
-
-			parts =
-				append(
-					parts,
-					fmt.Sprintf(
-						"%9.3f°",
-						full,
-					),
-				)
+			parts = append(parts, markPaddedCell(fmt.Sprintf("%.3f", full), fmt.Sprintf("%9.3f°", full)))
 
 		case refHalf:
-
-			parts =
-				append(
-					parts,
-					fmt.Sprintf(
-						"%9.3f°",
-						half,
-					),
-				)
+			parts = append(parts, markPaddedCell(fmt.Sprintf("%.3f", half), fmt.Sprintf("%9.3f°", half)))
 
 		case refOffset:
-
-			parts =
-				append(
-					parts,
-					fmt.Sprintf(
-						"%8.3f",
-						offset,
-					),
-				)
+			parts = append(parts, markPaddedCell(strings.TrimSpace(fmt.Sprintf("%8.3f", offset)), fmt.Sprintf("%8.3f", offset)))
 
 		case refCompValue:
-
-			parts =
-				append(
-					parts,
-					fmt.Sprintf(
-						"%10.3f",
-						compValue,
-					),
-				)
+			parts = append(parts, markPaddedCell(fmt.Sprintf("%.3f", compValue), fmt.Sprintf("%10.3f", compValue)))
 
 		case refCompressors:
-
-			parts =
-				append(
-					parts,
-					fmt.Sprintf(
-						"%10d",
-						compressors,
-					),
-				)
+			parts = append(parts, markPaddedCell(strconv.Itoa(compressors), fmt.Sprintf("%10d", compressors)))
 		}
 	}
 
