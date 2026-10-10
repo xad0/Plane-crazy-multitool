@@ -535,7 +535,7 @@ func (m model) viewPiston() tea.View {
 			resultLines =
 				append(
 					resultLines,
-					resultValueStyle.Render(valueText)+
+					resultValueStyle.Render(m.markCopyValue(valueText, valueText))+
 						separatorStyle.Render(" ")+
 						resultWarningStyle.Render(
 							"VALUE EXCEEDS LIMIT",
@@ -548,10 +548,7 @@ func (m model) viewPiston() tea.View {
 				append(
 					resultLines,
 					valueStyle.Render(
-						fmt.Sprintf(
-							"%.3f",
-							calculated,
-						),
+						m.markCopyValue(fmt.Sprintf("%.3f", calculated), fmt.Sprintf("%.3f", calculated)),
 					),
 				)
 		}

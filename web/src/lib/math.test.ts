@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateCrank, calculateDyno, calculateGear, calculatePiston, calculateWheel, round3 } from "./math";
+import { calculateCrank, calculateDyno, calculateDynoCurve, dynoPlotCoordinates, calculateGear, calculatePiston, calculateWheel, round3 } from "./math";
 
 describe("Go-reference math", () => {
   it("matches gear golden values", () => {
@@ -24,5 +24,28 @@ describe("Go-reference math", () => {
     const points = calculateDyno([{ sps: "10", torque: "20" }, { sps: "-1", torque: "4" }, { sps: "", torque: "2" }]);
     expect(points).toHaveLength(2);
     expect(points[0]).toEqual({ sps: 0, torque: 0, rpm: 0, bhp: 0 });
+  });
+  it("skips dyno rows whose derived values overflow", () => {
+    const points = calculateDyno([{ sps: "1.7976931348623157e+308", torque: "1" }, { sps: "10", torque: "1.7976931348623157e+308" }]);
+    expect(points).toEqual([{ sps: 0, torque: 0, rpm: 0, bhp: 0 }]);
+  });
+  it("maps both dyno graph modes to their correct axes", () => {
+    const points = calculateDyno([{ sps: "10", torque: "4" }, { sps: "20", torque: "8" }]);
+    expect(dynoPlotCoordinates(points, "bhp-rpm")[1]).toMatchObject({ x: 38.4, y: points[1].bhp });
+    expect(dynoPlotCoordinates(points, "torque-sps")[1]).toEqual({ x: 10, y: 4 });
+  });
+  it("samples a bounded smooth dyno curve in torque/SPS mode", () => {
+    const points = calculateDyno([{ sps: "10", torque: "0" }, { sps: "20", torque: "12" }, { sps: "30", torque: "4" }, { sps: "40", torque: "20" }]);
+    const curve = calculateDynoCurve(points, "torque-sps");
+    expect(curve.length).toBeGreaterThan(points.length);
+    for (let i = 0; i < curve.length; i++) {
+      expect(Number.isFinite(curve[i].x) && Number.isFinite(curve[i].y)).toBe(true);
+    }
+    const xs = points.map(p => p.sps), ys = points.map(p => p.torque);
+    for (const sample of curve) {
+      const segment = Math.min(xs.length - 2, Math.max(0, xs.findIndex((x, i) => i < xs.length - 1 && sample.x >= x && sample.x <= xs[i + 1])));
+      expect(sample.y).toBeGreaterThanOrEqual(Math.min(ys[segment], ys[segment + 1]) - 1e-9);
+      expect(sample.y).toBeLessThanOrEqual(Math.max(ys[segment], ys[segment + 1]) + 1e-9);
+    }
   });
 });

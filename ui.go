@@ -140,11 +140,12 @@ type model struct {
 	dynoFieldIndex int
 	dynoScroll     int
 	dynoFullscreen bool
+	dynoMode       dynoGraphMode
 
 	setupIndex       int
 	setupExportInput textinput.Model
 
-	copy copyState
+	copy *copyState
 }
 
 func newInput(value string) textinput.Model {
@@ -219,6 +220,7 @@ func initialModel() model {
 		settingsIndex:    0,
 		updatesIndex:     0,
 		startupMessage:   consumeUpdateCompletion(),
+		copy:             &copyState{},
 	}
 
 	m.updateThemeIndex()
@@ -236,6 +238,9 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.copy == nil {
+		m.copy = &copyState{}
+	}
 	switch msg := msg.(type) {
 
 	case updateChannelCheckMsg:
@@ -419,9 +424,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseClickMsg:
-		if raw, ok := m.copy.checkClick(msg.X, msg.Y); ok {
-			cmd := m.copyToClipboard(raw)
-			return m, cmd
+		if msg.Button == tea.MouseLeft {
+			if raw, ok := m.copy.checkClick(msg.X, msg.Y); ok {
+				cmd := m.copyToClipboard(raw)
+				return m, cmd
+			}
 		}
 		return m.handleMouse(msg)
 
@@ -3683,74 +3690,69 @@ func (m model) handleMouse(
 // ─────────────────────────────────────────────────────────────
 
 func (m model) View() tea.View {
-
-	switch m.page {
-
-	case pageHome:
-		return m.viewHome()
-
-	case pageSetup:
-		return m.viewSetup()
-
-	case pageMain:
-		return m.viewMain()
-
-	case pageCrank:
-		return m.viewCrank()
-
-	case pageWheel:
-		return m.viewWheel()
-
-	case pageDyno:
-		return m.viewDyno()
-	case pagePiston:
-		return m.viewPiston()
-
-	case pageSettings:
-		return m.viewSettings()
-
-	case pageUpdates:
-		return m.viewUpdates()
-
-	case pageCustomize:
-		return m.viewCustomize()
-
-	case pageToolCustomizeSelect:
-		return m.viewToolCustomizeSelect()
-
-	case pageAppearance:
-		return m.viewAppearance()
-
-	case pageThemes:
-		return m.viewThemes()
-
-	case pageFlavors:
-		return m.viewCatppuccinFlavors()
-
-	case pageAccents:
-		return m.viewAccents()
-
-	case pageTransparency:
-		return m.viewTransparency()
-
-	case pageLayout:
-		return m.viewLayout()
-
-	case pageReference:
-		return m.viewReference()
-
-	case pageCalculator:
-		return m.viewCalculator()
-
-	case pageReset:
-		return m.viewReset()
-
-	case pageAbout:
-		return m.viewAbout()
-
-	default:
-		return m.viewMain()
+	if m.copy == nil {
+		m.copy = &copyState{}
 	}
+	m.copy.clearTargets()
+
+	var view tea.View
+	switch m.page {
+	case pageHome:
+		view = m.viewHome()
+	case pageSetup:
+		view = m.viewSetup()
+	case pageMain:
+		view = m.viewMain()
+	case pageCrank:
+		view = m.viewCrank()
+	case pageWheel:
+		view = m.viewWheel()
+	case pageDyno:
+		view = m.viewDyno()
+	case pagePiston:
+		view = m.viewPiston()
+	case pageSettings:
+		view = m.viewSettings()
+	case pageUpdates:
+		view = m.viewUpdates()
+	case pageCustomize:
+		view = m.viewCustomize()
+	case pageToolCustomizeSelect:
+		view = m.viewToolCustomizeSelect()
+	case pageAppearance:
+		view = m.viewAppearance()
+	case pageThemes:
+		view = m.viewThemes()
+	case pageFlavors:
+		view = m.viewCatppuccinFlavors()
+	case pageAccents:
+		view = m.viewAccents()
+	case pageTransparency:
+		view = m.viewTransparency()
+	case pageLayout:
+		view = m.viewLayout()
+	case pageReference:
+		view = m.viewReference()
+	case pageCalculator:
+		view = m.viewCalculator()
+	case pageReset:
+		view = m.viewReset()
+	case pageAbout:
+		view = m.viewAbout()
+	default:
+		view = m.viewMain()
+	}
+
+	p := getPalette(m.theme, m.accent)
+	view.SetContent(m.copy.finalizeContent(view.Content, p))
+
+	// CellMotion only reports movement while a button is held. Hover-based copy
+	// highlighting needs AllMotion, limited to calculator screens.
+	switch m.page {
+	case pageMain, pageCrank, pageWheel, pagePiston:
+		view.MouseMode = tea.MouseModeAllMotion
+	}
+	return view
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -4768,6 +4770,7 @@ func (m model) referenceContent(
 					c,
 					columns,
 					spacing,
+					m.markCopyValue,
 				),
 			)
 	}
@@ -5174,7 +5177,7 @@ func (m model) viewMain() tea.View {
 							label,
 						),
 						valueStyle.Render(
-							value,
+							m.markCopyValue(strings.TrimSuffix(value, "°"), value),
 						),
 					)
 
@@ -5669,7 +5672,7 @@ func (m model) renderStackedCalculator(
 
 			value =
 				valueStyle.Render(
-					item.value,
+					m.markCopyValue(strings.TrimSuffix(item.value, "°"), item.value),
 				)
 		}
 
@@ -6162,7 +6165,24 @@ func buildReferenceRow(
 	compressors int,
 	columns []refColumn,
 	spacing int,
+	markCopy ...func(rawValue, displayText string) string,
 ) string {
+
+	markCell := func(rawValue, displayText string) string {
+		if len(markCopy) > 0 && markCopy[0] != nil {
+			return markCopy[0](rawValue, displayText)
+		}
+		return displayText
+	}
+
+	markPaddedCell := func(rawValue, paddedDisplay string) string {
+		visible := strings.TrimLeft(paddedDisplay, " ")
+		padding := len(paddedDisplay) - len(visible)
+		if padding <= 0 {
+			return markCell(rawValue, visible)
+		}
+		return paddedDisplay[:padding] + markCell(rawValue, visible)
+	}
 
 	var parts []string
 
@@ -6171,70 +6191,22 @@ func buildReferenceRow(
 		switch column {
 
 		case refTeeth:
-
-			parts =
-				append(
-					parts,
-					fmt.Sprintf(
-						"%5d",
-						teeth,
-					),
-				)
+			parts = append(parts, fmt.Sprintf("%5d", teeth))
 
 		case refFull:
-
-			parts =
-				append(
-					parts,
-					fmt.Sprintf(
-						"%9.3f°",
-						full,
-					),
-				)
+			parts = append(parts, markPaddedCell(fmt.Sprintf("%.3f", full), fmt.Sprintf("%9.3f°", full)))
 
 		case refHalf:
-
-			parts =
-				append(
-					parts,
-					fmt.Sprintf(
-						"%9.3f°",
-						half,
-					),
-				)
+			parts = append(parts, markPaddedCell(fmt.Sprintf("%.3f", half), fmt.Sprintf("%9.3f°", half)))
 
 		case refOffset:
-
-			parts =
-				append(
-					parts,
-					fmt.Sprintf(
-						"%8.3f",
-						offset,
-					),
-				)
+			parts = append(parts, markPaddedCell(strings.TrimSpace(fmt.Sprintf("%8.3f", offset)), fmt.Sprintf("%8.3f", offset)))
 
 		case refCompValue:
-
-			parts =
-				append(
-					parts,
-					fmt.Sprintf(
-						"%10.3f",
-						compValue,
-					),
-				)
+			parts = append(parts, markPaddedCell(fmt.Sprintf("%.3f", compValue), fmt.Sprintf("%10.3f", compValue)))
 
 		case refCompressors:
-
-			parts =
-				append(
-					parts,
-					fmt.Sprintf(
-						"%10d",
-						compressors,
-					),
-				)
+			parts = append(parts, markPaddedCell(strconv.Itoa(compressors), fmt.Sprintf("%10d", compressors)))
 		}
 	}
 

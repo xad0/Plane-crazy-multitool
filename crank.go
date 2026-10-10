@@ -521,17 +521,14 @@ func (m model) viewCrank() tea.View {
 					"BASE PHASE SPACING",
 				),
 				valueStyle.Render(
-					fmt.Sprintf(
-						"%.3f°",
-						angle,
-					),
+					m.markCopyValue(fmt.Sprintf("%.3f", angle), fmt.Sprintf("%.3f°", angle)),
 				),
 				"",
 				labelStyle.Render(
 					"EFFECTIVE POSITIONS",
 				),
 				valueStyle.Render(
-					strconv.Itoa(positions),
+					m.markCopyValue(strconv.Itoa(positions), strconv.Itoa(positions)),
 				),
 				"",
 				labelStyle.Render("FORMULA"),
@@ -551,15 +548,15 @@ func (m model) viewCrank() tea.View {
 			phase :=
 				float64(i) * angle
 
-			rightLines =
-				append(
-					rightLines,
-					fmt.Sprintf(
-						"Position %-2d  %9.3f°",
-						i+1,
-						phase,
-					),
-				)
+			phaseText := fmt.Sprintf("%.3f°", phase)
+			padding := 10 - lipgloss.Width(phaseText)
+			if padding < 0 {
+				padding = 0
+			}
+			rightLines = append(
+				rightLines,
+				fmt.Sprintf("Position %-2d  ", i+1)+strings.Repeat(" ", padding)+m.markCopyValue(fmt.Sprintf("%.3f", phase), phaseText),
+			)
 		}
 	}
 

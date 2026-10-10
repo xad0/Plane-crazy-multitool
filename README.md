@@ -42,9 +42,7 @@ It includes:
 
 ## Download
 
-The latest stable release is **v2.0.0**.
-
-Download the release for your platform from the [Releases](https://github.com/xadomas2012/Plane-crazy-multitool/releases) page.
+Download the current stable release for your platform from the [latest Releases page](https://github.com/xadomas2012/Plane-crazy-multitool/releases/latest).
 
 Available builds:
 
@@ -93,11 +91,15 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ## Updating
 
-Released versions include a built-in updater.
+Released versions include a built-in updater, operated manually from the Updates screen. The application does not run a background updater or silently download/install updates.
 
-When a newer release is available, the application can download the appropriate platform package and use the bundled updater to replace the installed executable.
+Update channels:
 
-Stable releases can update normally, and prerelease builds can update through newer prereleases and into a newer stable release.
+* **Workshop** — developer-oriented, manual update inspection.
+* **Edge** — the newest eligible stable release.
+* **Ironclad** — only releases marked `important` or `critical`.
+
+For release tagging, add an annotated Git tag message line such as `importance: important` or `importance: critical`. The accepted values are `normal`, `important`, and `critical`; an omitted importance line defaults to `normal`. Malformed `importance:` lines fail the release workflow rather than silently being treated as normal.
 
 ## Windows
 

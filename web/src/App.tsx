@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { calculateCrank, calculateDyno, calculateGear, calculatePiston, calculateWheel, DynoPoint, round3, CrankLayout } from "./lib/math";
+import { calculateCrank, calculateDyno, calculateDynoCurve, dynoPlotCoordinates, calculateGear, calculatePiston, calculateWheel, DynoPoint, DynoGraphMode, round3, CrankLayout } from "./lib/math";
 
 type Tool = "gear" | "crank" | "wheel" | "dyno" | "piston" | "settings";
 type Theme = "catppuccin-mocha" | "catppuccin-latte" | "catppuccin-frappe" | "catppuccin-macchiato" | "nord" | "gruvbox" | "solid";
@@ -52,18 +52,30 @@ function _addToast(message: string) {
 
 async function _copyToClipboard(rawValue: string) {
   try {
-    await navigator.clipboard.writeText(rawValue);
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      await navigator.clipboard.writeText(rawValue);
+      _addToast(`Copied ${rawValue}`);
+      return;
+    }
   } catch {
-    // Fallback for non-secure contexts / older browsers
-    const el = document.createElement("textarea");
-    el.value = rawValue;
-    el.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+    // Try the legacy API in browsers or contexts without Clipboard API access.
+  }
+
+  const el = document.createElement("textarea");
+  el.value = rawValue;
+  el.setAttribute("readonly", "");
+  el.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+  let copied = false;
+  try {
     document.body.appendChild(el);
     el.select();
-    document.execCommand("copy");
-    document.body.removeChild(el);
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  } finally {
+    el.remove();
   }
-  _addToast(`Copied ${rawValue}`);
+  _addToast(copied ? `Copied ${rawValue}` : "Copy failed: clipboard access was denied");
 }
 
 // Mounted once at the root; subscribes to the singleton bus.
@@ -129,33 +141,40 @@ function Result({ label, value, rawValue }: { label: string; value: string; rawV
 
 function GearTool({ settings }: { settings: Settings }) {
   const [teeth, setTeeth] = useState("6"), [compressors, setCompressors] = useState("1"), [manual, setManual] = useState(false);
-  const toothValue = Number(teeth), result = calculateGear(toothValue, manual ? Number(compressors) : undefined);
+  const toothValue = Number(teeth), result = calculateGear(toothValue, manual && settings.calculator.compressors ? Number(compressors) : undefined);
+  const gearLayout = !settings.referenceEnabled && settings.gearLayout === "reference-only" ? "calculator-only" : settings.gearLayout;
   useEffect(() => { if (result && !manual) setCompressors(String(result.compressors)); }, [teeth, manual, result?.compressors]);
   const reference = useMemo(() => Array.from({ length: Math.min(200, Math.max(0, settings.referenceMax - settings.referenceMin + 1)) }, (_, i) => calculateGear(settings.referenceMin + i)!), [settings.referenceMin, settings.referenceMax]);
   return (
-    <ToolLayout title="Gear calculator" intro="">
-      <Card title="Inputs">
+    <ToolLayout title="Gear calculator" intro="" className={`gear-layout gear-layout-${gearLayout}${settings.referenceEnabled ? "" : " gear-no-reference"}`}>
+      <div className="gear-calculator">
+      <Card title="Inputs" className="tool-inputs">
         <Field label="Number of teeth" value={teeth} onChange={(v) => { setTeeth(v); setManual(false); }} min={3} />
-        <div className="switch">
-          <input aria-label="Automatic compressors" type="checkbox" checked={!manual} onChange={(e) => setManual(!e.target.checked)} />
-          <span>Automatic compressors</span>
-        </div>
-        <Field label="Compressors" value={compressors} onChange={(v) => { setCompressors(v); setManual(true); }} min={1} />
+        {settings.calculator.compressors && <>
+          <div className="switch">
+            <input aria-label="Automatic compressors" type="checkbox" checked={!manual} onChange={(e) => setManual(!e.target.checked)} />
+            <span>Automatic compressors</span>
+          </div>
+          <Field label="Compressors" value={compressors} onChange={(v) => { setCompressors(v); setManual(true); }} min={1} />
+        </>}
       </Card>
-      <Card title="Result">
+      <Card title="Result" className="tool-results">
         {!result
           ? <Notice tone="error">Enter a whole tooth count of 3 or more. Teeth 1–2 are mathematically invalid.</Notice>
           : <>
             <div className="results-grid">
-              <Result label="Full angle"      value={fmt(result.full, "°")}              rawValue={result.full.toFixed(3)} />
-              <Result label="Half angle"      value={fmt(result.half, "°")}              rawValue={result.half.toFixed(3)} />
-              <Result label="Offset"          value={fmt(result.offset)}                 rawValue={result.offset.toFixed(3)} />
-              <Result label="Compressor value" value={fmt(round3(result.compressorValue))} rawValue={round3(result.compressorValue).toFixed(3)} />
+              {settings.calculator.teeth && <Result label="Teeth" value={String(toothValue)} />}
+              {settings.calculator.compressors && <Result label="Compressors" value={String(result.compressors)} />}
+              {settings.calculator.full && <Result label="Full angle" value={fmt(result.full, "°")} rawValue={result.full.toFixed(3)} />}
+              {settings.calculator.half && <Result label="Half angle" value={fmt(result.half, "°")} rawValue={result.half.toFixed(3)} />}
+              {settings.calculator.offset && <Result label="Offset" value={fmt(result.offset)} rawValue={result.offset.toFixed(3)} />}
+              {settings.calculator.value && <Result label="Compressor value" value={fmt(round3(result.compressorValue))} rawValue={round3(result.compressorValue).toFixed(3)} />}
             </div>
-            {result.compressorValue > 1 && <Notice tone="warn">MORE COMPRESSORS NEEDED</Notice>}
+            {!Object.entries(settings.calculator).some(([key, enabled]) => key !== "warnings" && enabled) && <p className="muted">Enable result fields in Settings → Calculator.</p>}
+            {settings.calculator.warnings && result.compressorValue > 1 && <Notice tone="warn">MORE COMPRESSORS NEEDED</Notice>}
           </>}
       </Card>
-      <Card title={`Gear reference · ${settings.referenceMin}–${settings.referenceMax} teeth`} className="wide">
+      {settings.referenceEnabled && <Card title={`Gear reference · ${settings.referenceMin}–${settings.referenceMax} teeth`} className="gear-reference wide">
         <div className="table-wrap">
           <table>
             <thead>
@@ -182,19 +201,20 @@ function GearTool({ settings }: { settings: Settings }) {
             </tbody>
           </table>
         </div>
-      </Card>
+      </Card>}
+      </div>
     </ToolLayout>
   );
 }
 
 // ── Crank angle calculator ─────────────────────────────────────────────────────
 
-function CrankTool() {
+function CrankTool({ settings }: { settings: Settings }) {
   const [layout, setLayout] = useState<CrankLayout>("Inline"), [cylinders, setCylinders] = useState("6");
   const result = calculateCrank(layout, Number(cylinders));
   return (
-    <ToolLayout title="Crank angle" intro="Find phase spacing for inline, V, and boxer engines.">
-      <Card title="Inputs">
+    <ToolLayout title="Crank angle" intro="Find phase spacing for inline, V, and boxer engines." className={settings.crankSide === "left" ? "side-left" : "side-right"}>
+      <Card title="Inputs" className="tool-inputs">
         <label className="field">
           <span>Layout</span>
           <select value={layout} onChange={(e) => setLayout(e.target.value as CrankLayout)}>
@@ -203,7 +223,7 @@ function CrankTool() {
         </label>
         <Field label="Cylinders" value={cylinders} onChange={setCylinders} min={1} />
       </Card>
-      <Card title="Phase positions">
+      <Card title="Phase positions" className="tool-results">
         {!result
           ? <Notice tone="error">Cylinder count must be positive.</Notice>
           : <>
@@ -227,15 +247,15 @@ function CrankTool() {
 
 // ── Wheel calculator ───────────────────────────────────────────────────────────
 
-function WheelTool() {
+function WheelTool({ settings }: { settings: Settings }) {
   const [size, setSize] = useState("10");
   const result = calculateWheel(Number(size));
   return (
-    <ToolLayout title="Wheel calculator" intro="Wheel lock angles and compressor values use their own calculation rules.">
-      <Card title="Input">
+    <ToolLayout title="Wheel calculator" intro="Wheel lock angles and compressor values use their own calculation rules." className={settings.wheelSide === "left" ? "side-left" : "side-right"}>
+      <Card title="Input" className="tool-inputs">
         <Field label="Tire size (sm)" value={size} onChange={setSize} min={1} />
       </Card>
-      <Card title="Tire result">
+      <Card title="Tire result" className="tool-results">
         {!result
           ? <Notice tone="error">Enter a positive whole tire size.</Notice>
           : <div className="results-grid">
@@ -252,17 +272,17 @@ function WheelTool() {
 
 // ── Piston length calculator ───────────────────────────────────────────────────
 
-function PistonTool() {
+function PistonTool({ settings }: { settings: Settings }) {
   const [distance, setDistance] = useState("1"), [pistons, setPistons] = useState("2"), [value, setValue] = useState("3.106");
   const length = calculatePiston(Number(distance), Number(pistons), Number(value));
   return (
-    <ToolLayout title="Piston length" intro="Calculate piston length from crank distance, piston count, and value.">
-      <Card title="Inputs">
+    <ToolLayout title="Piston length" intro="Calculate piston length from crank distance, piston count, and value." className={settings.pistonSide === "left" ? "side-left" : "side-right"}>
+      <Card title="Inputs" className="tool-inputs">
         <Field label="Crank distance"    value={distance} onChange={setDistance} min={0} step="any" />
         <Field label="Amount of pistons" value={pistons}  onChange={setPistons}  min={1} />
         <Field label="Value"             value={value}    onChange={setValue}    min={0} step="any" />
       </Card>
-      <Card title="Piston length">
+      <Card title="Piston length" className="tool-results">
         {length === null
           ? <Notice tone="error">Enter valid non-negative values and at least one piston.</Notice>
           : <>
@@ -277,12 +297,14 @@ function PistonTool() {
 // ── Dyno tool ─────────────────────────────────────────────────────────────────
 
 type DynoRow = { sps: string; torque: string };
-function DynoTool() {
+function DynoTool({ settings }: { settings: Settings }) {
   const [rows, setRows] = useState<DynoRow[]>(Array.from({ length: 5 }, () => ({ sps: "", torque: "" })));
+  const [graphMode, setGraphMode] = useState<DynoGraphMode>("bhp-rpm");
   const points = calculateDyno(rows);
   const measurements = points.slice(1);
   const update = (index: number, key: keyof DynoRow, value: string) =>
     setRows(rows.map((r, i) => i === index ? { ...r, [key]: value } : r));
+  const removeRow = (index: number) => setRows(current => current.length > 1 ? current.filter((_, i) => i !== index) : current);
   const peaks = measurements.length
     ? {
         torque: measurements.reduce((a, b) => b.torque > a.torque ? b : a),
@@ -291,22 +313,27 @@ function DynoTool() {
       }
     : null;
   return (
-    <ToolLayout title="Dyno" intro="Enter SPS and torque samples to plot smooth BHP against RPM.">
-      <Card title="Dyno data" className="dyno-data">
+    <ToolLayout title="Dyno" intro="Enter SPS and torque samples, then choose BHP/RPM or torque/SPS." className={settings.dynoSide === "left" ? "side-left" : "side-right"}>
+      <Card title="Dyno data" className="dyno-data tool-inputs">
         <div className="dyno-table">
-          <div className="dyno-head"><span>#</span><span>SPS</span><span>Torque</span></div>
+          <div className="dyno-head"><span>#</span><span>SPS</span><span>Torque</span><span aria-hidden="true" /></div>
           {rows.map((row, i) => (
             <div className="dyno-row" key={i}>
               <span>{i + 1}</span>
               <input aria-label={`SPS row ${i + 1}`}    inputMode="decimal" value={row.sps}    onChange={(e) => update(i, "sps",    e.target.value)} />
               <input aria-label={`Torque row ${i + 1}`} inputMode="decimal" value={row.torque} onChange={(e) => update(i, "torque", e.target.value)} />
+              <button type="button" className="row-remove" aria-label={`Remove dyno row ${i + 1}`} title="Remove row" disabled={rows.length <= 1} onClick={() => removeRow(i)}>×</button>
             </div>
           ))}
         </div>
         <button className="secondary" onClick={() => setRows([...rows, { sps: "", torque: "" }])}>Add row</button>
       </Card>
-      <Card title="BHP vs RPM" className="dyno-chart">
-        <DynoChart points={points} />
+      <Card title={graphMode === "bhp-rpm" ? "BHP vs RPM" : "Torque vs SPS"} className="dyno-chart tool-results">
+        <div className="graph-mode-switch" role="group" aria-label="Dyno graph mode">
+          <button type="button" className={graphMode === "bhp-rpm" ? "active" : ""} aria-pressed={graphMode === "bhp-rpm"} onClick={() => setGraphMode("bhp-rpm")}>BHP vs RPM</button>
+          <button type="button" className={graphMode === "torque-sps" ? "active" : ""} aria-pressed={graphMode === "torque-sps"} onClick={() => setGraphMode("torque-sps")}>Torque vs SPS</button>
+        </div>
+        <DynoChart points={points} mode={graphMode} />
         {peaks
           ? <div className="peaks">
               <Result label="Peak torque" value={`${fmt(peaks.torque.torque)} @ ${fmt(peaks.torque.sps)} SPS`}    rawValue={peaks.torque.torque.toFixed(3)} />
@@ -319,13 +346,13 @@ function DynoTool() {
   );
 }
 
-function DynoChart({ points }: { points: DynoPoint[] }) {
+function DynoChart({ points, mode }: { points: DynoPoint[]; mode: DynoGraphMode }) {
   const canvas = useRef<HTMLCanvasElement>(null), chartWrap = useRef<HTMLDivElement>(null), [hover, setHover] = useState<DynoPoint | null>(null), [fullscreen, setFullscreen] = useState(false);
   useEffect(() => {
     const el = canvas.current; if (!el) return;
-    const draw = () => drawDyno(el, points);
+    const draw = () => drawDyno(el, points, mode);
     const observer = new ResizeObserver(draw); observer.observe(el); draw(); return () => observer.disconnect();
-  }, [points]);
+  }, [points, mode]);
   useEffect(() => {
     const sync = () => setFullscreen(document.fullscreenElement === chartWrap.current);
     document.addEventListener("fullscreenchange", sync);
@@ -333,42 +360,48 @@ function DynoChart({ points }: { points: DynoPoint[] }) {
     return () => document.removeEventListener("fullscreenchange", sync);
   }, []);
   const pointer = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect(); if (!points.length) return;
+    const rect = event.currentTarget.getBoundingClientRect(); if (points.length <= 1) return;
     const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left - 48) / Math.max(1, rect.width - 72)));
-    const min = points[0].rpm, max = points.at(-1)!.rpm;
-    setHover(points.reduce((nearest, point) => Math.abs(point.rpm - (min + ratio * (max - min))) < Math.abs(nearest.rpm - (min + ratio * (max - min))) ? point : nearest));
+    const value = (point: DynoPoint) => mode === "torque-sps" ? point.sps : point.rpm;
+    const min = value(points[0]), max = value(points.at(-1)!);
+    const target = min + ratio * (max - min);
+    setHover(points.reduce((nearest, point) => Math.abs(value(point) - target) < Math.abs(value(nearest) - target) ? point : nearest));
   };
-  const download = () => { const el = canvas.current; if (!el || !points.length) return; const a = document.createElement("a"); a.download = "pc-multitool-dyno.png"; a.href = el.toDataURL("image/png"); a.click(); };
+  const download = () => { const el = canvas.current; if (!el || points.length <= 1) return; const a = document.createElement("a"); a.download = `pc-multitool-dyno-${mode}.png`; a.href = el.toDataURL("image/png"); a.click(); };
   const toggleFullscreen = async () => { const wrap = chartWrap.current; if (!wrap) return; try { if (document.fullscreenElement === wrap) await document.exitFullscreen(); else await wrap.requestFullscreen(); } catch { setFullscreen(false); } };
   return (
     <div ref={chartWrap} className="chart-wrap">
-      <canvas ref={canvas} className="chart" role="img" aria-label="Smooth BHP versus RPM Dyno graph" onPointerMove={pointer} onPointerLeave={() => setHover(null)} />
-      {hover && <output className="chart-tip">{fmt(hover.rpm)} RPM · {fmt(hover.bhp)} BHP</output>}
+      <canvas ref={canvas} className="chart" role="img" aria-label={mode === "bhp-rpm" ? "Smooth BHP versus RPM Dyno graph" : "Smooth torque versus SPS Dyno graph"} onPointerMove={pointer} onPointerLeave={() => setHover(null)} />
+      {hover && <output className="chart-tip">{mode === "torque-sps" ? `${fmt(hover.sps)} SPS · ${fmt(hover.torque)} torque` : `${fmt(hover.rpm)} RPM · ${fmt(hover.bhp)} BHP`}</output>}
       <div className="chart-actions">
         <button className="secondary" onClick={toggleFullscreen}>{fullscreen ? "Exit fullscreen" : "Fullscreen"}</button>
-        <button className="secondary" disabled={!points.length} onClick={download}>Save PNG</button>
+        <button className="secondary" disabled={points.length <= 1} onClick={download}>Save PNG</button>
       </div>
     </div>
   );
 }
 
-function drawDyno(canvas: HTMLCanvasElement, points: DynoPoint[]) {
+function drawDyno(canvas: HTMLCanvasElement, points: DynoPoint[], mode: DynoGraphMode) {
   const rect = canvas.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2), w = Math.max(280, rect.width), h = Math.max(260, rect.height);
   canvas.width = w * dpr; canvas.height = h * dpr; const ctx = canvas.getContext("2d")!; ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
   const css = getComputedStyle(document.documentElement), muted = css.getPropertyValue("--muted"), border = css.getPropertyValue("--border"), accent = css.getPropertyValue("--accent"), text = css.getPropertyValue("--text");
   const left = 52, right = 18, top = 16, bottom = 36, pw = w - left - right, ph = h - top - bottom;
   ctx.font = "12px system-ui"; ctx.strokeStyle = border; ctx.fillStyle = muted; ctx.lineWidth = 1;
-  if (!points.length) { ctx.textAlign = "center"; ctx.fillText("Enter SPS and torque data", w / 2, h / 2); return; }
-  let minX = points[0].rpm, maxX = points.at(-1)!.rpm, minY = Math.min(0, ...points.map(p => p.bhp)), maxY = Math.max(...points.map(p => p.bhp)); if (maxX === minX) maxX += 100; if (maxY === minY) maxY += 100;
+  const measured = points.length > 1;
+  if (!measured) { ctx.textAlign = "center"; ctx.fillText("Enter SPS and torque data", w / 2, h / 2); return; }
+  const mapped = dynoPlotCoordinates(points, mode), curve = calculateDynoCurve(points, mode);
+  let minX = mapped[0].x, maxX = mapped[mapped.length - 1].x, minY = Math.min(0, ...mapped.map(p => p.y)), maxY = Math.max(...mapped.map(p => p.y)); if (maxX === minX) maxX += 100; if (maxY === minY) maxY += 100;
   const x = (v: number) => left + (v - minX) / (maxX - minX) * pw, y = (v: number) => top + (1 - (v - minY) / (maxY - minY)) * ph;
+  const xLabel = mode === "torque-sps" ? "SPS" : "RPM", yLabel = mode === "torque-sps" ? "Torque" : "BHP";
   for (let i = 0; i <= 5; i++) { const gy = top + ph * i / 5, gx = left + pw * i / 5; ctx.beginPath(); ctx.moveTo(left, gy); ctx.lineTo(w - right, gy); ctx.moveTo(gx, top); ctx.lineTo(gx, h - bottom); ctx.stroke(); ctx.textAlign = "right"; ctx.fillText((maxY - (maxY - minY) * i / 5).toFixed(0), left - 7, gy + 4); ctx.textAlign = "center"; ctx.fillText((minX + (maxX - minX) * i / 5).toFixed(0), gx, h - 14); }
   ctx.strokeStyle = text; ctx.beginPath(); ctx.moveTo(left, top); ctx.lineTo(left, h - bottom); ctx.lineTo(w - right, h - bottom); ctx.stroke();
+  ctx.textAlign = "center"; ctx.fillStyle = muted; ctx.fillText(xLabel, left + pw / 2, h - 2);
+  ctx.save(); ctx.translate(12, top + ph / 2); ctx.rotate(-Math.PI / 2); ctx.fillText(yLabel, 0, 0); ctx.restore();
   ctx.strokeStyle = accent; ctx.lineWidth = 3; ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.beginPath();
-  if (points.length === 1) { ctx.arc(x(points[0].rpm), y(points[0].bhp), 4, 0, Math.PI * 2); ctx.stroke(); return; }
-  ctx.moveTo(x(points[0].rpm), y(points[0].bhp));
-  // Catmull–Rom converted to cubic Bézier curves: smooth and passes through each measurement.
-  for (let i = 0; i < points.length - 1; i++) { const p0 = points[Math.max(0, i - 1)], p1 = points[i], p2 = points[i + 1], p3 = points[Math.min(points.length - 1, i + 2)]; ctx.bezierCurveTo(x(p1.rpm + (p2.rpm - p0.rpm) / 6), y(p1.bhp + (p2.bhp - p0.bhp) / 6), x(p2.rpm - (p3.rpm - p1.rpm) / 6), y(p2.bhp - (p3.bhp - p1.bhp) / 6), x(p2.rpm), y(p2.bhp)); }
-  ctx.stroke(); ctx.fillStyle = accent; points.forEach(p => { ctx.beginPath(); ctx.arc(x(p.rpm), y(p.bhp), 3.5, 0, Math.PI * 2); ctx.fill(); });
+  if (mapped.length === 1) { ctx.arc(x(mapped[0].x), y(mapped[0].y), 4, 0, Math.PI * 2); ctx.stroke(); return; }
+  ctx.moveTo(x(curve[0].x), y(curve[0].y));
+  for (let i = 1; i < curve.length; i++) ctx.lineTo(x(curve[i].x), y(curve[i].y));
+  ctx.stroke(); ctx.fillStyle = accent; mapped.forEach(p => { ctx.beginPath(); ctx.arc(x(p.x), y(p.y), 3.5, 0, Math.PI * 2); ctx.fill(); });
 }
 
 // ── Settings tool ─────────────────────────────────────────────────────────────
@@ -459,8 +492,8 @@ function SideSelect({ label, value, change }: { label: string; value: Side; chan
   return <label className="field"><span>{label}</span><select value={value} onChange={(e) => change(e.target.value as Side)}><option value="right">Right</option><option value="left">Left</option></select></label>;
 }
 
-function ToolLayout({ title, children }: { title: string; intro?: string; children: React.ReactNode }) {
-  return <main><header className="page-header"><h1>{title}</h1></header><div className="tool-grid">{children}</div></main>;
+function ToolLayout({ title, children, className = "" }: { title: string; intro?: string; children: React.ReactNode; className?: string }) {
+  return <main><header className="page-header"><h1>{title}</h1></header><div className={`tool-grid ${className}`.trim()}>{children}</div></main>;
 }
 
 function Notice({ tone, children }: { tone: "warn" | "error"; children: React.ReactNode }) {
@@ -488,10 +521,10 @@ export function App() {
         </nav>
       </header>
       {tool === "gear"     && <GearTool settings={settings} />}
-      {tool === "crank"    && <CrankTool />}
-      {tool === "wheel"    && <WheelTool />}
-      {tool === "dyno"     && <DynoTool />}
-      {tool === "piston"   && <PistonTool />}
+      {tool === "crank"    && <CrankTool settings={settings} />}
+      {tool === "wheel"    && <WheelTool settings={settings} />}
+      {tool === "dyno"     && <DynoTool settings={settings} />}
+      {tool === "piston"   && <PistonTool settings={settings} />}
       {tool === "settings" && <SettingsTool settings={settings} setSettings={setSettings} />}
       <CopyToastContainer />
     </div>

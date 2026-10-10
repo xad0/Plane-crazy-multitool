@@ -18,16 +18,15 @@ const (
 )
 
 func main() {
-	if len(os.Args) != 5 {
-		fail("usage: updater <new-file> <target> <parent-pid> <version>")
+	args, err := parseUpdaterArgs(os.Args[1:])
+	if err != nil {
+		fail(err.Error())
 	}
 
-	newPath := os.Args[1]
-	targetPath := os.Args[2]
-	parentPID, err := strconv.Atoi(os.Args[3])
-	if err != nil {
-		fail(fmt.Sprintf("invalid parent PID: %v", err))
-	}
+	newPath := args.newPath
+	targetPath := args.targetPath
+	parentPID := args.parentPID
+	version := args.version
 
 	// Give the main application time to terminate.
 	time.Sleep(750 * time.Millisecond)
@@ -47,8 +46,6 @@ func main() {
 		time.Sleep(retryDelay)
 	}
 
-	version := os.Args[4]
-
 	if err := installUpdate(
 		newPath,
 		targetPath,
@@ -58,6 +55,39 @@ func main() {
 	}
 
 	cleanup(newPath)
+}
+
+type updaterArguments struct {
+	newPath    string
+	targetPath string
+	parentPID  int
+	version    string
+}
+
+// parseUpdaterArgs accepts the original three arguments and the newer optional
+// version argument. Keeping the old form valid allows installed v2.1.0 helpers
+// to work with a newer main application.
+func parseUpdaterArgs(args []string) (updaterArguments, error) {
+	if len(args) != 3 && len(args) != 4 {
+		return updaterArguments{}, fmt.Errorf("usage: updater <new-file> <target> <parent-pid> [version]")
+	}
+
+	parentPID, err := strconv.Atoi(args[2])
+	if err != nil {
+		return updaterArguments{}, fmt.Errorf("invalid parent PID: %w", err)
+	}
+
+	version := ""
+	if len(args) == 4 {
+		version = args[3]
+	}
+
+	return updaterArguments{
+		newPath:    args[0],
+		targetPath: args[1],
+		parentPID:  parentPID,
+		version:    version,
+	}, nil
 }
 
 func processIsRunning(pid int) bool {

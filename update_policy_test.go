@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestReleaseImportance(t *testing.T) {
 	tests := []struct {
@@ -256,5 +260,49 @@ func TestSelectUpdateReleaseStableSkipsPrerelease(t *testing.T) {
 			"got %q, want v1.2.0",
 			got.TagName,
 		)
+	}
+}
+
+func TestNormalizeUpdateVersion(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{input: "v2.3.0", want: "2.3.0"},
+		{input: "2.3.0", want: "2.3.0"},
+		{input: " V2.3.0 ", want: "2.3.0"},
+		{input: "dev", want: "dev"},
+	}
+	for _, tt := range tests {
+		if got := normalizeUpdateVersion(tt.input); got != tt.want {
+			t.Errorf("normalizeUpdateVersion(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestConsumeUpdateMarkerOnlyAcceptsInstalledVersion(t *testing.T) {
+	tests := []struct {
+		name           string
+		markerVersion  string
+		currentVersion string
+		want           string
+	}{
+		{name: "matching tag and executable version", markerVersion: "v2.3.0", currentVersion: "2.3.0", want: "v2.3.0"},
+		{name: "stale marker is ignored", markerVersion: "v2.3.0", currentVersion: "2.2.0", want: ""},
+		{name: "empty marker is ignored", markerVersion: "", currentVersion: "2.3.0", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "update-marker")
+			if err := os.WriteFile(path, []byte(tt.markerVersion), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if got := consumeUpdateMarker(path, tt.currentVersion); got != tt.want {
+				t.Fatalf("consumeUpdateMarker() = %q, want %q", got, tt.want)
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("marker should be removed after consumption, stat error = %v", err)
+			}
+		})
 	}
 }
